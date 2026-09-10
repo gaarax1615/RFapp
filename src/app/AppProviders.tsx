@@ -28,6 +28,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
       monitor,
       alerts,
       hardware,
+      audio,
       defaultSpectrumConfig,
     } = services
 
@@ -115,6 +116,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
       cleanup?.()
       void spectrum.stop()
       void monitor.stop()
+      void audio.stop()
     }
   }, [services])
 

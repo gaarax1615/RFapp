@@ -9,6 +9,12 @@ export const DEFAULT_SPECTRUM_CONFIG = {
 export const STORAGE_KEYS = {
   devices: 'rf-monitor.devices.v1',
   spectrumSource: 'rf-monitor.spectrum-source.v1',
+  sidebarCollapsed: 'rf-monitor.sidebar-collapsed.v1',
+  rtaSplit: 'rf-monitor.rta-split.v1',
+  rtaSensitivity: 'rf-monitor.rta-sensitivity.v1',
+  rangePanelPos: 'rf-monitor.range-panel-pos.v1',
+  monitorPopupPos: 'rf-monitor.monitor-popup-pos.v1',
+  scanInventory: 'rf-monitor.scan-inventory.v1',
 } as const
 
 export function formatFrequencyMhz(mhz: number, digits = 3): string {

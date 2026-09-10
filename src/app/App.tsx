@@ -8,6 +8,7 @@ import { MonitorPage } from '@/modules/monitor/MonitorPage'
 import { ChannelDetailPage } from '@/modules/monitor/ChannelDetailPage'
 import { AlertsPage } from '@/modules/alerts/AlertsPage'
 import { SettingsPage } from '@/modules/settings/SettingsPage'
+import { ScanPage } from '@/modules/scan/ScanPage'
 
 export function App() {
   return (
@@ -15,8 +16,10 @@ export function App() {
       <BrowserRouter>
         <AppShell>
           <Routes>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/spectrum" element={<SpectrumPage />} />
+            <Route path="/" element={<SpectrumPage />} />
+            <Route path="/spectrum" element={<Navigate to="/" replace />} />
+            <Route path="/panel" element={<DashboardPage />} />
+            <Route path="/scan" element={<ScanPage />} />
             <Route path="/devices" element={<DevicesPage />} />
             <Route path="/monitor" element={<MonitorPage />} />
             <Route path="/monitor/:deviceId" element={<ChannelDetailPage />} />

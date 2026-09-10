@@ -1,4 +1,5 @@
 import type { SpectrumFrame } from '@/types/spectrum'
+import { SPECTRUM_DB, plotPixelBounds } from '@/modules/spectrum/spectrumRange'
 
 export interface WaterfallRenderOptions {
   minDb: number
@@ -7,15 +8,15 @@ export interface WaterfallRenderOptions {
 }
 
 /**
- * Scrolling RF waterfall — modern teal/amber colormap.
+ * Cascada alineada al RTA: mismo recuadro en X, mismos bins, misma escala dB.
  */
 export class WaterfallRenderer {
   private canvas: HTMLCanvasElement | null = null
   private ctx: CanvasRenderingContext2D | null = null
   private buffer: ImageData | null = null
   private options: WaterfallRenderOptions = {
-    minDb: -110,
-    maxDb: -25,
+    minDb: SPECTRUM_DB.minDb,
+    maxDb: SPECTRUM_DB.maxDb,
     rowHeight: 2,
   }
 
@@ -43,18 +44,16 @@ export class WaterfallRenderer {
     const w = Math.max(1, Math.floor(cssWidth))
     const h = Math.max(1, Math.floor(cssHeight))
     const dpr = window.devicePixelRatio || 1
+    const { pixelW, leftPx, plotPx } = plotPixelBounds(w, dpr)
+    const pixelH = Math.floor(h * dpr)
 
-    if (
-      this.canvas.width !== Math.floor(w * dpr) ||
-      this.canvas.height !== Math.floor(h * dpr)
-    ) {
+    if (this.canvas.width !== pixelW || this.canvas.height !== pixelH) {
       this.resize(w, h)
     }
 
     const ctx = this.ctx
-    const pixelW = Math.floor(w * dpr)
-    const pixelH = Math.floor(h * dpr)
     const rowH = Math.max(1, Math.round(this.options.rowHeight * dpr))
+    if (plotPx <= 0) return
 
     if (this.buffer && this.buffer.width === pixelW && this.buffer.height === pixelH) {
       ctx.putImageData(this.buffer, 0, rowH)
@@ -65,13 +64,31 @@ export class WaterfallRenderer {
 
     const row = ctx.createImageData(pixelW, rowH)
     const bins = frame.powerDb.length
+    const lastBin = Math.max(1, bins - 1)
     const { minDb, maxDb } = this.options
+    const dbSpan = maxDb - minDb || 1
+    const bg: [number, number, number] = [13, 17, 23]
 
     for (let x = 0; x < pixelW; x++) {
-      const bin = Math.min(bins - 1, Math.floor((x / pixelW) * bins))
-      const db = frame.powerDb[bin] ?? minDb
-      const t = Math.max(0, Math.min(1, (db - minDb) / (maxDb - minDb)))
-      const [r, g, b] = heatColor(t)
+      const plotX = x - leftPx
+      const inPlot = plotX >= 0 && plotX < plotPx
+      let r = bg[0]
+      let g = bg[1]
+      let b = bg[2]
+
+      if (inPlot && bins > 0) {
+        const t = plotPx === 1 ? 0 : plotX / (plotPx - 1)
+        const binF = Math.max(0, Math.min(lastBin, t * lastBin))
+        const i0 = Math.floor(binF)
+        const i1 = Math.min(lastBin, i0 + 1)
+        const frac = binF - i0
+        const db0 = frame.powerDb[i0] ?? minDb
+        const db1 = frame.powerDb[i1] ?? db0
+        const db = db0 + (db1 - db0) * frac
+        const amp = Math.max(0, Math.min(1, (db - minDb) / dbSpan))
+        ;[r, g, b] = heatColor(amp)
+      }
+
       for (let y = 0; y < rowH; y++) {
         const i = (y * pixelW + x) * 4
         row.data[i] = r
@@ -86,17 +103,15 @@ export class WaterfallRenderer {
   }
 }
 
-/** Modern RF waterfall: deep navy → teal → lime → amber → white */
 function heatColor(t: number): [number, number, number] {
   const stops: [number, number, number, number][] = [
-    [0.0, 8, 12, 22],
-    [0.15, 15, 23, 42],
-    [0.3, 12, 74, 110],
+    [0.0, 13, 17, 23],
+    [0.12, 15, 23, 42],
+    [0.28, 12, 74, 110],
     [0.45, 15, 118, 110],
-    [0.6, 45, 180, 140],
-    [0.72, 132, 204, 22],
-    [0.85, 250, 204, 21],
-    [0.93, 251, 146, 60],
+    [0.62, 45, 180, 140],
+    [0.78, 94, 234, 212],
+    [0.9, 250, 204, 21],
     [1.0, 255, 255, 245],
   ]
 

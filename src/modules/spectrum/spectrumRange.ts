@@ -1,9 +1,39 @@
 export const SPECTRUM_PAD = {
-  top: 72,
-  right: 18,
-  bottom: 44,
-  left: 58,
+  top: 80,
+  right: 16,
+  bottom: 6,
+  left: 52,
 } as const
+
+/** Escala de amplitud por defecto (sensibilidad 50). */
+export const SPECTRUM_DB = {
+  minDb: -110,
+  maxDb: -20,
+} as const
+
+/** 0 = menos sensible · 100 = más sensible. El span vertical se mantiene. */
+export const RTA_SENSITIVITY = {
+  min: 0,
+  max: 100,
+  default: 50,
+  spanDb: 90,
+  minDbLeast: -80,
+  minDbMost: -140,
+} as const
+
+export function clampRtaSensitivity(value: number): number {
+  if (!Number.isFinite(value)) return RTA_SENSITIVITY.default
+  return Math.min(RTA_SENSITIVITY.max, Math.max(RTA_SENSITIVITY.min, Math.round(value)))
+}
+
+/** Ventana dB según sensibilidad. Más sensibilidad baja el piso y acerca las señales débiles. */
+export function rtaDbWindow(sensitivity: number): { minDb: number; maxDb: number } {
+  const t = clampRtaSensitivity(sensitivity) / 100
+  const minDb =
+    RTA_SENSITIVITY.minDbLeast +
+    t * (RTA_SENSITIVITY.minDbMost - RTA_SENSITIVITY.minDbLeast)
+  return { minDb, maxDb: minDb + RTA_SENSITIVITY.spanDb }
+}
 
 export const MIN_SPAN_MHZ = 1
 export const ABS_MIN_MHZ = 1
@@ -49,6 +79,39 @@ export function zoomAround(
 
 export function plotWidth(cssWidth: number): number {
   return cssWidth - SPECTRUM_PAD.left - SPECTRUM_PAD.right
+}
+
+/** Límites del recuadro de traza en píxeles de dispositivo — RTA y cascada. */
+export function plotPixelBounds(cssWidth: number, dpr: number) {
+  const pixelW = Math.max(1, Math.floor(cssWidth * dpr))
+  const leftPx = Math.round(SPECTRUM_PAD.left * dpr)
+  const rightPx = Math.round(SPECTRUM_PAD.right * dpr)
+  const plotPx = Math.max(1, pixelW - leftPx - rightPx)
+  return { pixelW, leftPx, rightPx, plotPx }
+}
+
+export function frequencyTickStepMhz(spanMhz: number): number {
+  if (spanMhz > 150) return 50
+  if (spanMhz > 60) return 20
+  if (spanMhz > 20) return 10
+  if (spanMhz > 8) return 5
+  if (spanMhz > 3) return 1
+  return 0.5
+}
+
+export function frequencyTicks(
+  startMhz: number,
+  endMhz: number,
+): { mhz: number; t: number }[] {
+  const span = endMhz - startMhz
+  if (span <= 0) return []
+  const step = frequencyTickStepMhz(span)
+  const ticks: { mhz: number; t: number }[] = []
+  const first = Math.ceil(startMhz / step) * step
+  for (let mhz = first; mhz <= endMhz + 1e-9; mhz += step) {
+    ticks.push({ mhz: +mhz.toFixed(4), t: (mhz - startMhz) / span })
+  }
+  return ticks
 }
 
 export function xToFrequencyMhz(

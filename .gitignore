@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Original logo exceeds GitHub's 100 MB limit
+*.mov
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

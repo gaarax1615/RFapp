@@ -1,33 +1,83 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type WheelEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type WheelEvent } from 'react'
 import { useServices } from '@/app/AppProviders'
 import { useAppStore } from '@/app/store'
 import type { SpectrumFrame } from '@/types/spectrum'
 import { SpectrumRenderer } from './SpectrumRenderer'
 import { WaterfallRenderer } from '@/modules/waterfall/WaterfallRenderer'
 import { FrequencyRangeControls } from './FrequencyRangeControls'
+import { FrequencyAxis } from './FrequencyAxis'
+import { ListenBar } from './ListenBar'
+import { RtaSensitivityControl } from './RtaSensitivityControl'
+import { clickListenBand, makeListenBand } from './rfListen'
+import { STORAGE_KEYS } from '@/utils/constants'
 import {
   clampRange,
+  clampRtaSensitivity,
   FULL_UHF,
+  RTA_SENSITIVITY,
+  SPECTRUM_PAD,
+  rtaDbWindow,
   xToFrequencyMhz,
   zoomAround,
 } from './spectrumRange'
 
-interface SpectrumAnalyzerProps {
-  showWaterfall?: boolean
+const RTA_SPLIT_MIN = 0.22
+const RTA_SPLIT_MAX = 0.88
+const RTA_SPLIT_DEFAULT = 0.74
+
+function readRtaSensitivity(): number {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.rtaSensitivity)
+    if (raw == null || raw === '') return RTA_SENSITIVITY.default
+    return clampRtaSensitivity(Number(raw))
+  } catch {
+    return RTA_SENSITIVITY.default
+  }
 }
 
-export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps) {
-  const { spectrum } = useServices()
+function persistRtaSensitivity(value: number): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.rtaSensitivity, String(clampRtaSensitivity(value)))
+  } catch {
+    /* ignore */
+  }
+}
+
+function readRtaSplit(): number {
+  try {
+    const v = Number(localStorage.getItem(STORAGE_KEYS.rtaSplit))
+    if (Number.isFinite(v) && v >= RTA_SPLIT_MIN && v <= RTA_SPLIT_MAX) return v
+  } catch {
+    /* ignore */
+  }
+  return RTA_SPLIT_DEFAULT
+}
+
+interface SpectrumAnalyzerProps {
+  showWaterfall?: boolean
+  /** Pantalla completa: RTA + cascada + barra de rango. */
+  solo?: boolean
+}
+
+export function SpectrumAnalyzer({
+  showWaterfall = true,
+  solo = false,
+}: SpectrumAnalyzerProps) {
+  const { spectrum, audio } = useServices()
   const devices = useAppStore((s) => s.devices)
   const selectedDeviceId = useAppStore((s) => s.selectedDeviceId)
   const setSelectedDeviceId = useAppStore((s) => s.setSelectedDeviceId)
   const spectrumRange = useAppStore((s) => s.spectrumRange)
   const setSpectrumRange = useAppStore((s) => s.setSpectrumRange)
+  const viewLocked = useAppStore((s) => s.viewLocked)
+  const listenBand = useAppStore((s) => s.listenBand)
+  const setListenBand = useAppStore((s) => s.setListenBand)
 
   const spectrumCanvasRef = useRef<HTMLCanvasElement>(null)
   const waterfallCanvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const waterfallContainerRef = useRef<HTMLDivElement>(null)
+  const columnRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef(new SpectrumRenderer())
   const waterfallRef = useRef(new WaterfallRenderer())
   const latestFrameRef = useRef<SpectrumFrame | null>(null)
@@ -35,22 +85,35 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
   const waterfallSizeRef = useRef({ w: 0, h: 0 })
   const dragRef = useRef<{ startX: number; currentX: number; moved: boolean } | null>(null)
   const [hint, setHint] = useState(
-    'Rueda = zoom · Arrastra = zoom a región · Doble clic en marcador = ±5 MHz',
+    'Rueda = zoom · Arrastra = zoom a región · Bloquear = escuchar zona',
   )
+  const [liveHud, setLiveHud] = useState({ fps: 0, startMhz: 0, endMhz: 0 })
+  const [volume, setVolume] = useState(() => audio.getVolume())
+  const [rtaRatio, setRtaRatio] = useState(readRtaSplit)
+  const [rtaSensitivity, setRtaSensitivity] = useState(readRtaSensitivity)
+  const fpsRef = useRef({ frames: 0, lastAt: performance.now() })
+  const rtaRatioRef = useRef(rtaRatio)
+  rtaRatioRef.current = rtaRatio
+  const rtaSensitivityRef = useRef(rtaSensitivity)
+  rtaSensitivityRef.current = rtaSensitivity
+  const dbWindow = rtaDbWindow(rtaSensitivity)
 
   const resetTraces = useCallback(() => {
     rendererRef.current.resetTraces()
     const canvas = waterfallCanvasRef.current
     if (!canvas) return
     waterfallRef.current.attach(canvas)
-    const { w, h } = waterfallSizeRef.current
+    const w = sizeRef.current.w || waterfallSizeRef.current.w
+    const h = waterfallSizeRef.current.h
     if (w > 0 && h > 0) {
+      waterfallSizeRef.current = { w, h }
       waterfallRef.current.resize(w, h)
     }
   }, [])
 
   const applyRange = useCallback(
     async (startMhz: number, endMhz: number) => {
+      if (useAppStore.getState().viewLocked) return
       const next = clampRange(startMhz, endMhz)
       if (!next) return
       await spectrum.setRange(next.startMhz, next.endMhz)
@@ -59,6 +122,67 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     },
     [spectrum, setSpectrumRange, resetTraces],
   )
+
+  const startListen = useCallback(
+    async (band: { startMhz: number; endMhz: number } | null) => {
+      if (!band) return
+      try {
+        await audio.listenToBand(band, spectrum)
+        setListenBand(band)
+        setHint(
+          `Escuchando ${band.startMhz.toFixed(3)}–${band.endMhz.toFixed(3)} MHz`,
+        )
+      } catch (e) {
+        setHint(e instanceof Error ? e.message : 'No se pudo iniciar la escucha')
+      }
+    },
+    [audio, spectrum, setListenBand],
+  )
+
+  const stopListen = useCallback(async () => {
+    await audio.stop()
+    setListenBand(null)
+    setHint('Escucha detenida')
+  }, [audio, setListenBand])
+
+  const onSplitPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const col = columnRef.current
+    const handle = event.currentTarget
+    if (!col) return
+    handle.setPointerCapture(event.pointerId)
+    const startY = event.clientY
+    const startRatio = rtaRatioRef.current
+    const usable = Math.max(160, col.getBoundingClientRect().height)
+
+    const onMove = (ev: globalThis.PointerEvent) => {
+      const next = startRatio + (ev.clientY - startY) / usable
+      setRtaRatio(Math.min(RTA_SPLIT_MAX, Math.max(RTA_SPLIT_MIN, next)))
+    }
+    const onUp = (ev: globalThis.PointerEvent) => {
+      handle.releasePointerCapture(ev.pointerId)
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onUp)
+      handle.removeEventListener('pointercancel', onUp)
+      try {
+        localStorage.setItem(STORAGE_KEYS.rtaSplit, String(rtaRatioRef.current))
+      } catch {
+        /* ignore */
+      }
+    }
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onUp)
+    handle.addEventListener('pointercancel', onUp)
+  }
+
+  const onSplitDoubleClick = () => {
+    setRtaRatio(RTA_SPLIT_DEFAULT)
+    try {
+      localStorage.setItem(STORAGE_KEYS.rtaSplit, String(RTA_SPLIT_DEFAULT))
+    } catch {
+      /* ignore */
+    }
+  }
 
   const redrawOverlay = useCallback(() => {
     const frame = latestFrameRef.current
@@ -70,52 +194,79 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     rendererRef.current.setOptions({
       devices: useAppStore.getState().devices,
       selectedDeviceId: useAppStore.getState().selectedDeviceId,
-      zoomSelection: dragRef.current
-        ? { x0: dragRef.current.startX, x1: dragRef.current.currentX }
-        : null,
+      showFrequencyAxis: !showWaterfall,
+      showHud: !solo,
+      listenBand: useAppStore.getState().listenBand,
+      zoomSelection:
+        dragRef.current && !useAppStore.getState().viewLocked
+          ? { x0: dragRef.current.startX, x1: dragRef.current.currentX }
+          : null,
+      listenDrag:
+        dragRef.current && useAppStore.getState().viewLocked
+          ? { x0: dragRef.current.startX, x1: dragRef.current.currentX }
+          : null,
     })
     rendererRef.current.draw(ctx, frame, w, h)
-  }, [])
+  }, [showWaterfall, solo])
 
   useEffect(() => {
     rendererRef.current.resetTraces()
   }, [spectrumRange.startMhz, spectrumRange.endMhz])
 
   useEffect(() => {
-    rendererRef.current.setOptions({ devices, selectedDeviceId })
+    return () => {
+      void audio.stop()
+      useAppStore.getState().setListenBand(null)
+    }
+  }, [audio])
+
+  useEffect(() => {
+    rendererRef.current.setOptions({
+      devices,
+      selectedDeviceId,
+      showFrequencyAxis: !showWaterfall,
+      showHud: !solo,
+      listenBand,
+      minDb: dbWindow.minDb,
+      maxDb: dbWindow.maxDb,
+    })
+    waterfallRef.current.setOptions({
+      minDb: dbWindow.minDb,
+      maxDb: dbWindow.maxDb,
+    })
     redrawOverlay()
-  }, [devices, selectedDeviceId, redrawOverlay])
+  }, [devices, selectedDeviceId, redrawOverlay, showWaterfall, solo, listenBand, dbWindow.minDb, dbWindow.maxDb])
 
   useEffect(() => {
     const spectrumEl = containerRef.current
     const waterfallEl = waterfallContainerRef.current
+    const columnEl = columnRef.current
     if (!spectrumEl) return
+
+    const columnWidth = () => {
+      const el = columnEl ?? spectrumEl
+      return Math.max(1, Math.floor(el.getBoundingClientRect().width))
+    }
 
     const resizeSpectrum = () => {
       const canvas = spectrumCanvasRef.current
       if (!canvas || !spectrumEl) return
-      const rect = spectrumEl.getBoundingClientRect()
-      const w = Math.max(1, Math.floor(rect.width))
-      const h = Math.max(1, Math.floor(rect.height))
+      const w = columnWidth()
+      const h = Math.max(1, Math.floor(spectrumEl.getBoundingClientRect().height))
       sizeRef.current = { w, h }
       const dpr = window.devicePixelRatio || 1
       canvas.width = Math.floor(w * dpr)
       canvas.height = Math.floor(h * dpr)
-      canvas.style.width = `${w}px`
-      canvas.style.height = `${h}px`
       redrawOverlay()
     }
 
     const resizeWaterfall = () => {
       if (!waterfallEl || !waterfallCanvasRef.current) return
-      const rect = waterfallEl.getBoundingClientRect()
-      const w = Math.max(1, Math.floor(rect.width))
-      const h = Math.max(1, Math.floor(rect.height))
+      const w = columnWidth()
+      const h = Math.max(1, Math.floor(waterfallEl.getBoundingClientRect().height))
       waterfallSizeRef.current = { w, h }
       waterfallRef.current.attach(waterfallCanvasRef.current)
       waterfallRef.current.resize(w, h)
-      waterfallCanvasRef.current.style.width = `${w}px`
-      waterfallCanvasRef.current.style.height = `${h}px`
     }
 
     resizeSpectrum()
@@ -127,6 +278,7 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     })
     ro.observe(spectrumEl)
     if (waterfallEl) ro.observe(waterfallEl)
+    if (columnEl) ro.observe(columnEl)
 
     return () => ro.disconnect()
   }, [showWaterfall, redrawOverlay])
@@ -138,30 +290,55 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
 
     return spectrum.subscribe((frame) => {
       latestFrameRef.current = frame
+      const fps = fpsRef.current
+      fps.frames += 1
+      const now = performance.now()
+      if (now - fps.lastAt >= 500) {
+        const nextFps = Math.round((fps.frames * 1000) / (now - fps.lastAt))
+        fps.frames = 0
+        fps.lastAt = now
+        setLiveHud({
+          fps: nextFps,
+          startMhz: frame.startFrequencyMhz,
+          endMhz: frame.endFrequencyMhz,
+        })
+      }
       const canvas = spectrumCanvasRef.current
       const { w, h } = sizeRef.current
       if (canvas && w > 0) {
         const ctx = canvas.getContext('2d')
         if (ctx) {
+          const db = rtaDbWindow(rtaSensitivityRef.current)
           rendererRef.current.setOptions({
             devices: useAppStore.getState().devices,
             selectedDeviceId: useAppStore.getState().selectedDeviceId,
-            zoomSelection: dragRef.current
-              ? { x0: dragRef.current.startX, x1: dragRef.current.currentX }
-              : null,
+            showFrequencyAxis: !showWaterfall,
+            showHud: !solo,
+            listenBand: useAppStore.getState().listenBand,
+            minDb: db.minDb,
+            maxDb: db.maxDb,
+            zoomSelection:
+              dragRef.current && !useAppStore.getState().viewLocked
+                ? { x0: dragRef.current.startX, x1: dragRef.current.currentX }
+                : null,
+            listenDrag:
+              dragRef.current && useAppStore.getState().viewLocked
+                ? { x0: dragRef.current.startX, x1: dragRef.current.currentX }
+                : null,
           })
           rendererRef.current.draw(ctx, frame, w, h)
         }
       }
 
       if (showWaterfall) {
-        const { w: ww, h: wh } = waterfallSizeRef.current
+        const ww = sizeRef.current.w
+        const wh = waterfallSizeRef.current.h
         if (ww > 0 && wh > 0) {
           waterfallRef.current.pushFrame(frame, ww, wh)
         }
       }
     })
-  }, [spectrum, showWaterfall])
+  }, [spectrum, showWaterfall, solo])
 
   const onPointerDown = (event: MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
@@ -192,18 +369,16 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
       if (Math.abs(x - dragRef.current.startX) > 4) {
         dragRef.current.moved = true
       }
-      rendererRef.current.setOptions({
-        zoomSelection: {
-          x0: dragRef.current.startX,
-          x1: dragRef.current.currentX,
-        },
-      })
     }
     redrawOverlay()
   }
 
   const onPointerLeave = () => {
-    rendererRef.current.setOptions({ cursorMhz: null, zoomSelection: null })
+    rendererRef.current.setOptions({
+      cursorMhz: null,
+      zoomSelection: null,
+      listenDrag: null,
+    })
     if (dragRef.current && !dragRef.current.moved) {
       dragRef.current = null
     }
@@ -215,7 +390,7 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     const canvas = spectrumCanvasRef.current
     const drag = dragRef.current
     dragRef.current = null
-    rendererRef.current.setOptions({ zoomSelection: null })
+    rendererRef.current.setOptions({ zoomSelection: null, listenDrag: null })
 
     if (!frame || !canvas) {
       redrawOverlay()
@@ -225,6 +400,33 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     const rect = canvas.getBoundingClientRect()
     const x = event.clientX - rect.left
     const { w } = sizeRef.current
+    const locked = useAppStore.getState().viewLocked
+
+    if (locked) {
+      if (drag?.moved) {
+        const f0 = xToFrequencyMhz(drag.startX, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
+        const f1 = xToFrequencyMhz(drag.currentX, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
+        if (f0 != null && f1 != null) {
+          void startListen(makeListenBand(f0, f1))
+          return
+        }
+      }
+      const hit = rendererRef.current.hitTestDevice(
+        x,
+        w,
+        frame,
+        useAppStore.getState().devices,
+      )
+      if (hit) {
+        setSelectedDeviceId(hit.id)
+        void startListen(clickListenBand(hit.frequencyMhz))
+        return
+      }
+      const freq = xToFrequencyMhz(x, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
+      if (freq != null) void startListen(clickListenBand(freq))
+      redrawOverlay()
+      return
+    }
 
     if (drag?.moved) {
       const f0 = xToFrequencyMhz(drag.startX, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
@@ -254,6 +456,19 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     const rect = canvas.getBoundingClientRect()
     const x = event.clientX - rect.left
     const { w } = sizeRef.current
+    if (useAppStore.getState().viewLocked) {
+      const hit = rendererRef.current.hitTestDevice(
+        x,
+        w,
+        frame,
+        useAppStore.getState().devices,
+      )
+      const freq =
+        hit?.frequencyMhz ??
+        xToFrequencyMhz(x, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
+      if (freq != null) void startListen(clickListenBand(freq))
+      return
+    }
     const hit = rendererRef.current.hitTestDevice(
       x,
       w,
@@ -275,6 +490,7 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
 
   const onWheel = (event: WheelEvent<HTMLCanvasElement>) => {
     event.preventDefault()
+    if (useAppStore.getState().viewLocked) return
     const frame = latestFrameRef.current
     const canvas = spectrumCanvasRef.current
     if (!frame || !canvas) return
@@ -340,49 +556,168 @@ export function SpectrumAnalyzer({ showWaterfall = true }: SpectrumAnalyzerProps
     setHint('Rango UHF completo')
   }
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <FrequencyRangeControls
-        onRangeApplied={resetTraces}
-        onZoomIn={zoomIn}
-        onZoomOut={zoomOut}
-        onZoomSelected={zoomToSelected}
-        onFitDevices={fitDevices}
-        onResetZoom={resetZoom}
-      />
+  const axisStart = liveHud.startMhz || spectrumRange.startMhz
+  const axisEnd = liveHud.endMhz || spectrumRange.endMhz
 
-      <div
-        ref={containerRef}
-        className="relative min-h-[260px] flex-1 overflow-hidden rounded-xl border border-white/10 bg-[#0d1117] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-      >
-        <canvas
-          ref={spectrumCanvasRef}
-          className="absolute inset-0 h-full w-full cursor-crosshair touch-none"
-          onMouseDown={onPointerDown}
-          onMouseMove={onPointerMove}
-          onMouseUp={onPointerUp}
-          onMouseLeave={onPointerLeave}
-          onDoubleClick={onDoubleClick}
-          onWheel={onWheel}
+  return (
+    <div className={solo ? 'relative flex h-full min-h-0 flex-col' : 'flex min-h-0 flex-1 flex-col gap-2'}>
+      {solo ? (
+        <FrequencyRangeControls
+          compact
+          onRangeApplied={resetTraces}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onZoomSelected={zoomToSelected}
+          onFitDevices={fitDevices}
+          onResetZoom={resetZoom}
         />
-        <p className="pointer-events-none absolute right-2 bottom-2 rounded-md bg-[#0d1117]/85 px-2 py-1 font-mono text-[10px] text-slate-400">
-          {hint}
-        </p>
-      </div>
-      {showWaterfall ? (
+      ) : (
+        <FrequencyRangeControls
+          compact={false}
+          onRangeApplied={resetTraces}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onZoomSelected={zoomToSelected}
+          onFitDevices={fitDevices}
+          onResetZoom={resetZoom}
+        />
+      )}
+      {solo || !listenBand ? null : (
+        <ListenBar
+          band={listenBand}
+          volume={volume}
+          onVolume={(v) => {
+            setVolume(v)
+            audio.setVolume(v)
+          }}
+          onStop={() => void stopListen()}
+        />
+      )}
+
+      <div ref={columnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div
-          ref={waterfallContainerRef}
-          className="relative h-44 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-[#0d1117] md:h-56"
+          ref={containerRef}
+          className={
+            solo
+              ? 'relative min-h-[80px] overflow-hidden bg-[#0d1117]'
+              : 'relative min-h-[80px] overflow-hidden rounded-t-xl border border-white/10 bg-[#0d1117] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+          }
+          style={
+            showWaterfall
+              ? { flex: `${rtaRatio} 1 0%` }
+              : { flex: '1 1 auto' }
+          }
         >
           <canvas
-            ref={waterfallCanvasRef}
-            className="absolute inset-0 h-full w-full"
+            ref={spectrumCanvasRef}
+            className="absolute inset-0 h-full w-full cursor-crosshair touch-none"
+            onMouseDown={onPointerDown}
+            onMouseMove={onPointerMove}
+            onMouseUp={onPointerUp}
+            onMouseLeave={onPointerLeave}
+            onDoubleClick={onDoubleClick}
+            onWheel={onWheel}
           />
-          <div className="pointer-events-none absolute top-2 left-2 rounded-md bg-[#0d1117]/80 px-2 py-0.5 font-mono text-[10px] tracking-wider text-teal-300/80 uppercase">
-            Cascada
-          </div>
+          <RtaSensitivityControl
+            value={rtaSensitivity}
+            minDb={dbWindow.minDb}
+            maxDb={dbWindow.maxDb}
+            onChange={setRtaSensitivity}
+            onChangeEnd={persistRtaSensitivity}
+          />
+          {solo ? (
+            <>
+              {listenBand ? (
+                <div className="pointer-events-none absolute top-3 right-3 z-10 max-w-[min(24rem,calc(100%-2rem))]">
+                  <div className="pointer-events-auto">
+                    <ListenBar
+                      band={listenBand}
+                      volume={volume}
+                      onVolume={(v) => {
+                        setVolume(v)
+                        audio.setVolume(v)
+                      }}
+                      onStop={() => void stopListen()}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              <div className="pointer-events-none absolute right-3 bottom-2 z-10 flex items-center gap-3 font-mono text-[11px] text-slate-400">
+                <span className="flex items-center gap-1.5 text-teal-300">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-teal-300" />
+                  VIVO
+                </span>
+                <span>{liveHud.fps} fps</span>
+                <span>
+                  {Math.round(dbWindow.minDb)}/{Math.round(dbWindow.maxDb)} dB
+                </span>
+                {viewLocked ? (
+                  <span className="text-amber-300">BLOQUEADO · arrastra para escuchar</span>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <p className="pointer-events-none absolute right-2 bottom-2 rounded-md bg-[#0d1117]/85 px-2 py-1 font-mono text-[10px] text-slate-400">
+              {viewLocked
+                ? 'Bloqueado · arrastra una zona para escucharla'
+                : hint}
+            </p>
+          )}
         </div>
-      ) : null}
+
+        {showWaterfall ? (
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-valuemin={Math.round(RTA_SPLIT_MIN * 100)}
+            aria-valuemax={Math.round(RTA_SPLIT_MAX * 100)}
+            aria-valuenow={Math.round(rtaRatio * 100)}
+            title="Arrastra para cambiar el tamaño · doble clic restablece"
+            onPointerDown={onSplitPointerDown}
+            onDoubleClick={onSplitDoubleClick}
+            className="group relative z-20 shrink-0 cursor-row-resize touch-none select-none"
+          >
+            <div className="relative h-1.5 bg-white/10 transition-colors group-hover:bg-teal-400/70 group-active:bg-teal-300">
+              <span className="absolute top-1/2 left-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-400 group-hover:bg-teal-100" />
+            </div>
+            <FrequencyAxis startMhz={axisStart} endMhz={axisEnd} />
+          </div>
+        ) : null}
+
+        {showWaterfall ? (
+          <div
+            ref={waterfallContainerRef}
+            className={
+              solo
+                ? 'relative min-h-[64px] overflow-hidden bg-[#0d1117]'
+                : 'relative min-h-[64px] overflow-hidden rounded-b-xl border border-t-0 border-white/10 bg-[#0d1117]'
+            }
+            style={{ flex: `${1 - rtaRatio} 1 0%` }}
+          >
+            <canvas
+              ref={waterfallCanvasRef}
+              className="absolute inset-0 h-full w-full"
+            />
+            {listenBand && axisEnd > axisStart ? (
+              <div
+                className="pointer-events-none absolute inset-y-0"
+                style={{
+                  left: SPECTRUM_PAD.left,
+                  right: SPECTRUM_PAD.right,
+                }}
+              >
+                <div
+                  className="absolute inset-y-0 border-x border-amber-300/80 bg-amber-400/15"
+                  style={{
+                    left: `${((listenBand.startMhz - axisStart) / (axisEnd - axisStart)) * 100}%`,
+                    width: `${((listenBand.endMhz - listenBand.startMhz) / (axisEnd - axisStart)) * 100}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

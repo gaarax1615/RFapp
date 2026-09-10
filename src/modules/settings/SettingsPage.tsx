@@ -7,7 +7,7 @@ import { formatFrequencyMhz } from '@/utils/constants'
 const AUDIO_STATUS: Record<string, string> = {
   unavailable: 'no disponible',
   idle: 'en espera',
-  monitoring: 'monitoreando',
+  listening: 'escuchando zona',
   error: 'error',
 }
 
@@ -70,8 +70,10 @@ export function SettingsPage() {
             {AUDIO_STATUS[audio.getStatus()] ?? audio.getStatus()}
           </p>
           <p className="mt-3 text-xs text-rf-muted">
-            Interfaz de audio preparada y desacoplada del analizador de espectro.
-            No implica que un SDR pueda demodular sistemas digitales propietarios.
+            Interfaz de audio lista: con el RTA bloqueado, arrastra una zona para
+            escucharla (sonorización de la energía RF). La demodulación real
+            llegará con hardware SDR; no se asume que un SDR demodule sistemas
+            digitales propietarios.
           </p>
         </div>
 

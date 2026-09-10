@@ -1,6 +1,5 @@
 import { createSpectrumSource, type SpectrumSourceKind } from '@/hardware/spectrum'
 import { MockChannelMetricsSource } from '@/hardware/metrics'
-import { StubAudioMonitorSource } from '@/hardware/audio'
 import { JsonDeviceRepository } from '@/repositories'
 import {
   AlertService,
@@ -24,7 +23,7 @@ export function createAppServices() {
   const devices = new DeviceService(new JsonDeviceRepository())
   const monitor = new MonitorService(new MockChannelMetricsSource())
   const alerts = new AlertService()
-  const audio = new AudioMonitorService(new StubAudioMonitorSource())
+  const audio = new AudioMonitorService()
 
   return {
     spectrum,
