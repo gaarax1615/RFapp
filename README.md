@@ -1,55 +1,107 @@
 # RF Monitor
 
-Aplicación local/offline para monitoreo y coordinación de frecuencias RF en eventos en vivo.
+App local para ver espectro, coordinar inalámbricos (BLX / IEM) y monitorear canales. Frontend (Vite) + backend Python (RTL-SDR).
 
-## Stack (Beta 1)
+La raíz de este repo **es el frontend**. El servidor SDR está en `Backend/`.
 
-- React 19 + TypeScript + Vite
-- Tailwind CSS v4
-- Zustand + React Router
-- Canvas 2D propio (`SpectrumRenderer` / `WaterfallRenderer`)
-- Datos simulados vía `MockSpectrumSource` / `MockChannelMetricsSource`
-- Persistencia local: `JsonDeviceRepository` (localStorage)
+## Qué necesitas
 
-## Desarrollo
+- macOS o Linux
+- [Node.js 20+](https://nodejs.org/) (`node -v`)
+- [Python 3.9+](https://www.python.org/) (`python3 --version`)
+- Git
 
-Frontend + Backend (RTL-SDR) a la vez:
+Para un **RTL-SDR de verdad** (Nooelec, etc.) en macOS:
 
 ```bash
+brew install librtlsdr
+```
+
+Comprueba el dongle:
+
+```bash
+rtl_test
+```
+
+Sin dongle también arranca: el backend usa espectro de prueba.
+
+## Levantar el proyecto
+
+```bash
+git clone https://github.com/gaarax1615/RFapp.git
+cd RFapp
+chmod +x start.sh
 ./start.sh
 ```
 
-O solo esta UI:
+La primera vez crea el `.venv` de Python, instala el backend y hace `npm install`. Luego deja:
+
+| Qué | URL |
+|-----|-----|
+| UI | http://localhost:5173/ |
+| Backend | http://127.0.0.1:8787 |
+
+Abre **solo** `http://localhost:5173/` (no el 8787).
+
+En la app:
+
+1. **Ajustes → Buscar de nuevo**
+2. Elige **Backend local** o **RTL-SDR** si aparece el serial
+3. **Escaneo**: equipos del evento (p. ej. BLX K12 + IEM) → inventario → **Buscar óptimas**
+4. Pon grupo/canal a mano en el receptor → **Actualizar frecuencias** → **Panel**
+
+Para parar: `Ctrl+C` en la terminal del `start.sh`.
+
+## Si `./start.sh` falla
+
+Instala a mano y arranca en **dos terminales**.
+
+**Terminal 1 — backend**
+
+```bash
+cd Backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+python -m sdr_server
+```
+
+**Terminal 2 — frontend**
 
 ```bash
 npm install
 npm run dev
 ```
 
-Abre `http://127.0.0.1:5173`. En Ajustes elige **Backend local**. Detalles: `Backend/README.md`.
+Misma UI: http://localhost:5173/
 
-## Módulos
+## Dongle y ganancia
 
-| Ruta | Descripción |
-|------|-------------|
-| `/` | Dashboard KPIs |
-| `/spectrum` | Spectrum + waterfall + marcadores |
-| `/devices` | CRUD de dispositivos RF |
-| `/monitor` | Tarjetas de canal |
-| `/monitor/:id` | Detalle (RF/Noise/SNR, mini-spectrum, historial) |
-| `/alerts` | AlertService |
-| `/settings` | Fuente, rango, prep LAN/audio |
+Opcional, en `Backend/.env` (copia `Backend/.env.example`):
 
-## Arquitectura
+```bash
+RF_SDR_SERIAL=         # vacío = primer dongle
+RF_SDR_GAIN=28.0
+RF_SDR_MOCK=0          # 1 = ignorar el dongle y usar prueba
+```
 
-- `src/hardware` — adapters (SpectrumSource, audio, metrics)
-- `src/services` — lógica de aplicación
-- `src/repositories` — almacenamiento
-- `src/modules` — pantallas UI
-- `src/types` — contratos tipados
+Después de cambiar Python hay que **reiniciar** el backend (`Ctrl+C` y otra vez `./start.sh`). Vite recarga el frontend solo.
 
-La UI no depende de hardware concreto. Cambiar de mock a RTL-SDR/HackRF se hace en `createAppServices`.
+## Rutas de la UI
 
-## Próximo
+| Ruta | Uso |
+|------|-----|
+| `/` | Espectro + cascada |
+| `/panel` | Cards de monitoreo |
+| `/scan` | Inventario y frecuencias óptimas |
+| `/devices` | Dispositivos guardados |
+| `/monitor` | Monitor de canales |
+| `/alerts` | Alertas |
+| `/settings` | SDR, kit del evento, rango |
 
-HackRF en el backend Python · demodulación de audio real.
+## Notas
+
+- Un RTL solo ve ~2 MHz a la vez; el rango del kit se barre a saltos.
+- La cascada va a color a propósito (saturación). El resto de la UI es blanco y negro.
+- El backend solo escucha en localhost. No subas `.env` ni `.venv`.
