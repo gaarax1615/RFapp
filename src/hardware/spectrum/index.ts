@@ -9,11 +9,11 @@ export type SpectrumSourceKind = 'mock' | 'rtl-sdr' | 'hackrf' | 'remote'
 export function createSpectrumSource(kind: SpectrumSourceKind = 'mock'): SpectrumSource {
   switch (kind) {
     case 'rtl-sdr':
-      return new RTLSDRSource()
+      return new RemoteSpectrumSource({ preferDevice: 'rtl-sdr' })
     case 'hackrf':
       return new HackRFSource()
     case 'remote':
-      return new RemoteSpectrumSource()
+      return new RemoteSpectrumSource({ preferDevice: 'auto' })
     case 'mock':
     default:
       return new MockSpectrumSource()
@@ -21,6 +21,7 @@ export function createSpectrumSource(kind: SpectrumSourceKind = 'mock'): Spectru
 }
 
 export { MockSpectrumSource, RTLSDRSource, HackRFSource, RemoteSpectrumSource }
+export type { RemotePreferDevice, RemoteSpectrumOptions } from './RemoteSpectrumSource'
 export {
   detectSpectrumHardware,
   type DetectedHardwareOption,

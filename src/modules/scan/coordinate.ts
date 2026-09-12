@@ -27,6 +27,10 @@ export interface CoordAssignment {
   bandLabel: string
   type: WirelessModel['type']
   alternatives: FreqChoice[]
+  /** Pico RF en ±150 kHz (menor = más limpia). */
+  noiseDb?: number
+  /** Limpia / Aceptable / Sucia respecto al piso del atlas. */
+  quality?: 'clean' | 'ok' | 'dirty'
 }
 
 export interface CoordPlan {
@@ -50,7 +54,11 @@ export interface CoordError {
 type Taken = { mhz: number; model: WirelessModel }
 type Resolved = { unit: CoordUnit; model: WirelessModel }
 
+/** Menor = más limpia. Si no hay espectro, todas empatan. */
+export type FreqScore = (mhz: number) => number
+
 const IM_GUARD_MHZ = 0.12
+const quietest = (a: number, b: number, score: FreqScore) => score(a) - score(b)
 
 function roundMhz(mhz: number): number {
   return +mhz.toFixed(3)
@@ -72,7 +80,7 @@ function tooClose(freq: number, model: WirelessModel, taken: Taken[]): boolean {
   )
 }
 
-function blockedNear(freq: number, blocked: number[], guard = 0.2): boolean {
+function blockedNear(freq: number, blocked: number[], guard = 0.35): boolean {
   return blocked.some((b) => Math.abs(b - freq) < guard)
 }
 
@@ -111,14 +119,27 @@ function viableBlxGroups(
   count: number,
   taken: Taken[],
   blocked: number[],
+  score: FreqScore,
 ): { group: PresetGroup; usable: PresetChannel[] }[] {
   return (model.groups ?? [])
-    .map((group) => ({
-      group,
-      usable: group.channels.filter((c) => candidateOk(c.mhz, model, taken, blocked)),
-    }))
+    .map((group) => {
+      const usable = group.channels
+        .filter((c) => candidateOk(c.mhz, model, taken, blocked))
+        .sort((a, b) => quietest(a.mhz, b.mhz, score))
+      return { group, usable }
+    })
     .filter((g) => g.usable.length >= count)
-    .sort((a, b) => b.usable.length - a.usable.length)
+    .sort((a, b) => {
+      const energyA = meanScore(a.usable.slice(0, count).map((c) => c.mhz), score)
+      const energyB = meanScore(b.usable.slice(0, count).map((c) => c.mhz), score)
+      if (energyA !== energyB) return energyA - energyB
+      return b.usable.length - a.usable.length
+    })
+}
+
+function meanScore(freqs: number[], score: FreqScore): number {
+  if (freqs.length === 0) return 0
+  return freqs.reduce((s, f) => s + score(f), 0) / freqs.length
 }
 
 function pllCandidates(model: WirelessModel): number[] {
@@ -155,14 +176,15 @@ function placePll(
   others: Resolved[],
   takenStart: Taken[],
   blocked: number[],
+  score: FreqScore,
 ): CoordAssignment[] | null {
   const taken = [...takenStart]
   const out: CoordAssignment[] = []
   for (const row of others) {
     const model = row.model
-    const good = pllCandidates(model).filter((f) =>
-      candidateOk(f, model, taken, blocked),
-    )
+    const good = pllCandidates(model)
+      .filter((f) => candidateOk(f, model, taken, blocked))
+      .sort((a, b) => quietest(a, b, score))
     const pick = good[0]
     if (pick == null) return null
     taken.push({ mhz: pick, model })
@@ -189,9 +211,133 @@ function cartesian<T>(lists: T[][]): T[][] {
   )
 }
 
+export function groupContainingMhz(
+  model: WirelessModel,
+  mhz: number,
+): PresetGroup | undefined {
+  return model.groups?.find((group) =>
+    group.channels.some((channel) => Math.abs(channel.mhz - mhz) < 0.002),
+  )
+}
+
+export interface LockedFreq {
+  catalogId: string
+  mhz: number
+}
+
+/** Otro canal para un solo equipo, sin mover al resto. BLX se queda en el mismo grupo. */
+export function rescanSingle(
+  target: CoordUnit,
+  currentMhz: number,
+  locked: LockedFreq[],
+  blocked: number[] = [],
+  score: FreqScore = () => 0,
+  excludeMhz: number[] = [],
+): { ok: true; assignment: CoordAssignment } | CoordError {
+  const model = getWirelessModel(target.catalogId)
+  if (!model) return { ok: false, error: `Modelo no reconocido: ${target.catalogId}` }
+
+  const taken: Taken[] = []
+  for (const row of locked) {
+    const lockedModel = getWirelessModel(row.catalogId)
+    if (lockedModel) taken.push({ mhz: row.mhz, model: lockedModel })
+  }
+
+  const notCurrent = (freq: number) =>
+    Math.abs(freq - currentMhz) >= 0.002 &&
+    !excludeMhz.some((skip) => Math.abs(skip - freq) < 0.002)
+
+  if (model.tuning === 'blx-group-channel') {
+    const siblings = locked.filter((row) => row.catalogId === model.id)
+    let group = groupContainingMhz(model, currentMhz)
+    if (!group && siblings[0]) {
+      group = groupContainingMhz(model, siblings[0].mhz)
+    }
+
+    const usableIn = (preset: PresetGroup) =>
+      preset.channels
+        .filter((channel) => notCurrent(channel.mhz) && candidateOk(channel.mhz, model, taken, blocked))
+        .sort((a, b) => quietest(a.mhz, b.mhz, score))
+
+    if (siblings.length > 0 && group) {
+      const usable = usableIn(group)
+      if (usable.length === 0) {
+        return {
+          ok: false,
+          error: `No hay otro canal libre en ${group.label} para ${target.name}. Reescanear todos los ${model.bandLabel}.`,
+        }
+      }
+      const pick = usable[0]!
+      return {
+        ok: true,
+        assignment: assignment(
+          target,
+          model,
+          pick.mhz,
+          `${group.label} · Canal ${pick.label}`,
+          usable.slice(1, 6).map((channel) => ({
+            frequencyMhz: channel.mhz,
+            hardware: `${group.label} · Canal ${channel.label}`,
+          })),
+        ),
+      }
+    }
+
+    const options = viableBlxGroups(model, 1, taken, blocked, score)
+      .map((option) => ({
+        ...option,
+        usable: option.usable.filter((channel) => notCurrent(channel.mhz)),
+      }))
+      .filter((option) => option.usable.length > 0)
+    if (options.length === 0) {
+      return {
+        ok: false,
+        error: `No hay otro canal BLX ${model.bandLabel} libre para ${target.name}.`,
+      }
+    }
+    const best = options[0]!
+    const pick = best.usable[0]!
+    return {
+      ok: true,
+      assignment: assignment(
+        target,
+        model,
+        pick.mhz,
+        `${best.group.label} · Canal ${pick.label}`,
+        best.usable.slice(1, 6).map((channel) => ({
+          frequencyMhz: channel.mhz,
+          hardware: `${best.group.label} · Canal ${channel.label}`,
+        })),
+      ),
+    }
+  }
+
+  const good = pllCandidates(model)
+    .filter((freq) => notCurrent(freq) && candidateOk(freq, model, taken, blocked))
+    .sort((a, b) => quietest(a, b, score))
+  const pick = good[0]
+  if (pick == null) {
+    return { ok: false, error: `No hay otro MHz libre para ${target.name}.` }
+  }
+  return {
+    ok: true,
+    assignment: assignment(
+      target,
+      model,
+      pick,
+      `${pick.toFixed(3)} MHz en el transmisor`,
+      good.slice(1, 6).map((freq) => ({
+        frequencyMhz: freq,
+        hardware: `${freq.toFixed(3)} MHz en el transmisor`,
+      })),
+    ),
+  }
+}
+
 export function coordinateFrequencies(
   units: CoordUnit[],
   blocked: number[] = [],
+  score: FreqScore = () => 0,
 ): CoordSuccess | CoordError {
   if (units.length === 0) {
     return { ok: false, error: 'Agrega al menos un dispositivo.' }
@@ -220,7 +366,7 @@ export function coordinateFrequencies(
   }
 
   const perBandOptions = blxBands.map((band) => {
-    const options = viableBlxGroups(band.model, band.units.length, [], blocked)
+    const options = viableBlxGroups(band.model, band.units.length, [], blocked, score)
     return { band, options }
   })
 
@@ -269,7 +415,7 @@ export function coordinateFrequencies(
       })
     })
 
-    const pll = placePll(others, taken, blocked)
+    const pll = placePll(others, taken, blocked, score)
     if (!pll) continue
 
     const order = new Map(units.map((u, i) => [u.id, i]))
@@ -279,8 +425,8 @@ export function coordinateFrequencies(
 
     const why =
       titleParts.length > 0
-        ? `Todos los BLX de la misma banda en el mismo grupo (carta Shure). Canales distintos dentro de ese grupo. ${minFree} canales libres en el grupo elegido.`
-        : 'Frecuencias PLL separadas y sin intermodulación de 3er orden entre ellas.'
+        ? `Mismo grupo Shure en esa banda, canales distintos, y los más limpios del espectro actual. ${minFree} canales libres en el grupo.`
+        : 'PLL en los MHz más quietos, separados y sin IM3 entre ellos.'
 
     plans.push({
       id: `plan-${plans.length}-${titleParts.join('-') || 'pll'}`,
@@ -295,6 +441,15 @@ export function coordinateFrequencies(
     if (plans.length >= 8) break
   }
 
+  plans.sort((a, b) => {
+    const ea = meanScore(a.assignments.map((x) => x.frequencyMhz), score)
+    const eb = meanScore(b.assignments.map((x) => x.frequencyMhz), score)
+    return ea - eb
+  })
+  plans.forEach((plan, index) => {
+    plan.title = plan.title.replace(/^Opción \d+/, `Opción ${index + 1}`)
+  })
+
   if (plans.length === 0) {
     return {
       ok: false,
@@ -303,4 +458,27 @@ export function coordinateFrequencies(
   }
 
   return { ok: true, plans }
+}
+
+/** Anota ruido y calidad en cada asignación del plan. */
+export function annotatePlanQuality(
+  plan: CoordPlan,
+  score: FreqScore,
+  noiseFloorDb: number,
+  qualityOf: (energyDb: number, floor: number) => 'clean' | 'ok' | 'dirty',
+): CoordPlan {
+  return {
+    ...plan,
+    assignments: plan.assignments.map((row) => {
+      const noiseDb = score(row.frequencyMhz)
+      return {
+        ...row,
+        noiseDb,
+        quality: qualityOf(noiseDb, noiseFloorDb),
+        alternatives: row.alternatives.map((alt) => ({
+          ...alt,
+        })),
+      }
+    }),
+  }
 }

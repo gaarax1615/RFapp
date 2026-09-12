@@ -3,13 +3,18 @@ import { createPortal } from 'react-dom'
 import { useServices } from '@/app/AppProviders'
 import { useAppStore } from '@/app/store'
 import { STORAGE_KEYS } from '@/utils/constants'
+import type { ListenDemod } from '@/types/audio'
+import { ListenDemodButtons } from './ListenBar'
 import {
   ABS_MAX_MHZ,
   ABS_MIN_MHZ,
   clampRange,
-  FULL_UHF,
+  DEFAULT_SWEEP,
+  LIVE_WINDOW_MHZ,
+  MAX_SPAN_MHZ,
   MIN_SPAN_MHZ,
 } from './spectrumRange'
+import { kitPrimaryViewRange } from '@/modules/scan/eventKit'
 
 const DEFAULT_PANEL_POS = { x: 64, y: 16 }
 
@@ -45,12 +50,27 @@ function clampPanelPos(x: number, y: number, panel: HTMLElement): { x: number; y
 }
 
 const PRESETS: { id: string; label: string; start: number; end: number }[] = [
-  { id: 'uhf', label: 'UHF 470–698', start: FULL_UHF.startMhz, end: FULL_UHF.endMhz },
-  { id: '500-600', label: '500–600', start: 500, end: 600 },
-  { id: 'low', label: '470–542', start: 470, end: 542 },
-  { id: 'mid', label: '516–590', start: 516, end: 590 },
-  { id: 'high', label: '614–698', start: 614, end: 698 },
+  { id: 'kit', label: 'Kit evento', start: DEFAULT_SWEEP.startMhz, end: DEFAULT_SWEEP.endMhz },
+  { id: 'k12', label: '614–638 K12', start: 614, end: 638 },
+  { id: 'j11', label: '596–616 J11', start: 596, end: 616 },
+  { id: 'm15', label: '662–686 M15', start: 662, end: 686 },
+  { id: 'iem', label: '550–580 IEM', start: 550, end: 580 },
 ]
+
+function kitAwarePresets(
+  catalogIds: string[],
+): { id: string; label: string; start: number; end: number }[] {
+  const kit = kitPrimaryViewRange(catalogIds)
+  const head = kit
+    ? {
+        id: 'kit',
+        label: `${kit.startMhz.toFixed(0)}–${kit.endMhz.toFixed(0)} kit`,
+        start: kit.startMhz,
+        end: kit.endMhz,
+      }
+    : PRESETS[0]!
+  return [head, ...PRESETS.filter((p) => p.id !== 'kit')]
+}
 
 interface FrequencyRangeControlsProps {
   compact?: boolean
@@ -71,12 +91,23 @@ export function FrequencyRangeControls({
   onFitDevices,
   onResetZoom,
 }: FrequencyRangeControlsProps) {
-  const { spectrum } = useServices()
+  const { spectrum, audio } = useServices()
   const spectrumRange = useAppStore((s) => s.spectrumRange)
   const setSpectrumRange = useAppStore((s) => s.setSpectrumRange)
   const viewLocked = useAppStore((s) => s.viewLocked)
   const setViewLocked = useAppStore((s) => s.setViewLocked)
+  const setListenBand = useAppStore((s) => s.setListenBand)
+  const listenDemod = useAppStore((s) => s.listenDemod)
+  const setListenDemod = useAppStore((s) => s.setListenDemod)
+
+  const applyDemod = (mode: ListenDemod) => {
+    setListenDemod(mode)
+    const band = useAppStore.getState().listenBand
+    if (band) void audio.listenToBand(band, spectrum, mode)
+  }
   const selectedDeviceId = useAppStore((s) => s.selectedDeviceId)
+  const eventKitCatalogIds = useAppStore((s) => s.eventKitCatalogIds)
+  const presets = kitAwarePresets(eventKitCatalogIds)
 
   const [start, setStart] = useState(String(spectrumRange.startMhz))
   const [end, setEnd] = useState(String(spectrumRange.endMhz))
@@ -88,27 +119,55 @@ export function FrequencyRangeControls({
     setEnd(String(spectrumRange.endMhz))
   }, [spectrumRange.startMhz, spectrumRange.endMhz])
 
-  const applyRange = async (startMhz: number, endMhz: number) => {
-    if (viewLocked) return
+  const applyRange = async (
+    startMhz: number,
+    endMhz: number,
+    opts?: { ignoreLock?: boolean },
+  ): Promise<boolean> => {
+    if (viewLocked && !opts?.ignoreLock) setViewLocked(false)
+    const requested = Math.abs(endMhz - startMhz)
     const next = clampRange(startMhz, endMhz)
     if (!next) {
-      setError(`Ancho mínimo ${MIN_SPAN_MHZ} MHz · ${ABS_MIN_MHZ}–${ABS_MAX_MHZ}`)
-      return
+      setError(
+        `Ancho ${MIN_SPAN_MHZ}–${MAX_SPAN_MHZ} MHz · ${ABS_MIN_MHZ}–${ABS_MAX_MHZ}`,
+      )
+      return false
     }
 
     setBusy(true)
-    setError(null)
+    setError(
+      requested > MAX_SPAN_MHZ + 0.01
+        ? `Máximo ${MAX_SPAN_MHZ} MHz. Ajustado a ${next.startMhz.toFixed(0)}–${next.endMhz.toFixed(0)}.`
+        : null,
+    )
     try {
-      await spectrum.setRange(next.startMhz, next.endMhz)
+      if (useAppStore.getState().listenBand) {
+        await audio.stop(spectrum)
+        setListenBand(null)
+      }
+      const changed = await spectrum.setRange(next.startMhz, next.endMhz)
       setSpectrumRange(next)
       setStart(String(next.startMhz))
       setEnd(String(next.endMhz))
-      onRangeApplied?.()
+      if (changed) onRangeApplied?.()
+      return true
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo aplicar el rango')
+      return false
     } finally {
       setBusy(false)
     }
+  }
+
+  const toggleLock = () => {
+    if (viewLocked) {
+      setViewLocked(false)
+      return
+    }
+    void (async () => {
+      const ok = await applyRange(Number(start), Number(end), { ignoreLock: true })
+      if (ok) setViewLocked(true)
+    })()
   }
 
   const onApplyCustom = () => {
@@ -116,7 +175,8 @@ export function FrequencyRangeControls({
   }
 
   const span = spectrumRange.endMhz - spectrumRange.startMhz
-  const disabled = busy || viewLocked
+  const zoomDisabled = busy || viewLocked
+  const disabled = busy
   const hasSelection = Boolean(selectedDeviceId)
 
   if (compact) {
@@ -128,59 +188,63 @@ export function FrequencyRangeControls({
         error={error}
         disabled={disabled}
         viewLocked={viewLocked}
-        presets={PRESETS}
+        presets={presets}
         onStartChange={setStart}
         onEndChange={setEnd}
         onApply={onApplyCustom}
         onPreset={(s, e) => void applyRange(s, e)}
-        onToggleLock={() => setViewLocked(!viewLocked)}
+        onToggleLock={toggleLock}
+        listenDemod={listenDemod}
+        onListenDemod={applyDemod}
       />
     )
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#121820] px-3 py-2.5">
+    <div className="rounded-xl border border-white/10 bg-[#141414] px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-[10px] tracking-[0.14em] text-slate-400 uppercase">
             Rango de frecuencia
           </span>
           <span className="font-mono text-[11px] text-slate-500">
-            ANCHO {span.toFixed(span < 20 ? 2 : 0)} MHz
+            ANCHO {span.toFixed(span < 20 ? 2 : 0)} MHz ·{' '}
+            {span <= LIVE_WINDOW_MHZ + 0.05 ? 'tiempo real' : `barrido · máx ${MAX_SPAN_MHZ}`}
           </span>
         </div>
         <div className="flex flex-wrap gap-1.5">
-          <ZoomBtn label="−" title="Alejar" onClick={onZoomOut} disabled={disabled} />
-          <ZoomBtn label="+" title="Acercar" onClick={onZoomIn} disabled={disabled} />
+          <ZoomBtn label="−" title="Alejar" onClick={onZoomOut} disabled={zoomDisabled} />
+          <ZoomBtn label="+" title="Acercar" onClick={onZoomIn} disabled={zoomDisabled} />
           <ZoomBtn
             label="Zoom dispositivo"
-            title="Zoom ±5 MHz al dispositivo seleccionado"
+            title="Ventana en tiempo real (~1.6 MHz) al dispositivo seleccionado"
             onClick={onZoomSelected}
-            disabled={disabled || !hasSelection}
+            disabled={zoomDisabled || !hasSelection}
             wide
           />
           <ZoomBtn
             label="Ajustar a dispositivos"
             title="Ajustar vista a todos los dispositivos activos"
             onClick={onFitDevices}
-            disabled={disabled}
+            disabled={zoomDisabled}
             wide
           />
           <ZoomBtn
             label="Restablecer"
-            title="UHF completo"
+            title="Volver a la banda del kit de evento"
             onClick={onResetZoom}
-            disabled={disabled}
+            disabled={zoomDisabled}
             wide
           />
+          <ListenDemodButtons value={listenDemod} onChange={applyDemod} />
           <button
             type="button"
-            onClick={() => setViewLocked(!viewLocked)}
+            onClick={toggleLock}
             className={[
               'rounded-md border px-2 py-1 font-mono text-[11px] uppercase',
               viewLocked
                 ? 'border-amber-400/50 bg-amber-400/15 text-amber-300'
-                : 'border-white/10 text-slate-300 hover:border-teal-400/40 hover:text-teal-300',
+                : 'border-white/10 text-slate-300 hover:border-zinc-400/40 hover:text-zinc-300',
             ].join(' ')}
           >
             {viewLocked ? 'Bloqueado' : 'Bloquear'}
@@ -189,7 +253,7 @@ export function FrequencyRangeControls({
       </div>
 
       <div className="mt-2 flex flex-wrap gap-1.5">
-        {PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <button
             key={preset.id}
             type="button"
@@ -216,7 +280,7 @@ export function FrequencyRangeControls({
             onKeyDown={(e) => {
               if (e.key === 'Enter') onApplyCustom()
             }}
-            className="w-[7.5rem] rounded-md border border-white/10 bg-[#0d1117] px-2 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-teal-400/50 disabled:opacity-50"
+            className="w-[7.5rem] rounded-md border border-white/10 bg-[#050505] px-2 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-zinc-400/50 disabled:opacity-50"
           />
         </label>
         <label className="block">
@@ -232,14 +296,14 @@ export function FrequencyRangeControls({
             onKeyDown={(e) => {
               if (e.key === 'Enter') onApplyCustom()
             }}
-            className="w-[7.5rem] rounded-md border border-white/10 bg-[#0d1117] px-2 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-teal-400/50 disabled:opacity-50"
+            className="w-[7.5rem] rounded-md border border-white/10 bg-[#050505] px-2 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-zinc-400/50 disabled:opacity-50"
           />
         </label>
         <button
           type="button"
           disabled={disabled}
           onClick={onApplyCustom}
-          className="rounded-md bg-teal-400/20 px-3 py-1.5 text-sm font-medium text-teal-300 hover:bg-teal-400/30 disabled:opacity-50"
+          className="rounded-md bg-zinc-400/20 px-3 py-1.5 text-sm font-medium text-zinc-300 hover:bg-zinc-400/30 disabled:opacity-50"
         >
           {busy ? '…' : 'Ver rango'}
         </button>
@@ -271,7 +335,7 @@ function ZoomBtn({
       disabled={disabled || !onClick}
       onClick={onClick}
       className={[
-        'rounded-md border border-white/10 bg-[#0d1117] font-mono text-[11px] text-slate-300 transition-colors hover:border-teal-400/40 hover:text-teal-300 disabled:opacity-40',
+        'rounded-md border border-white/10 bg-[#050505] font-mono text-[11px] text-slate-300 transition-colors hover:border-zinc-400/40 hover:text-zinc-300 disabled:opacity-40',
         wide ? 'px-2 py-1' : 'min-w-8 px-2 py-1',
       ].join(' ')}
     >
@@ -293,6 +357,8 @@ function FloatingRangePanel({
   onApply,
   onPreset,
   onToggleLock,
+  listenDemod,
+  onListenDemod,
 }: {
   start: string
   end: string
@@ -306,6 +372,8 @@ function FloatingRangePanel({
   onApply: () => void
   onPreset: (start: number, end: number) => void
   onToggleLock: () => void
+  listenDemod: ListenDemod
+  onListenDemod: (mode: ListenDemod) => void
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState(readPanelPos)
@@ -390,7 +458,7 @@ function FloatingRangePanel({
   return createPortal(
     <div
       ref={panelRef}
-      className="pointer-events-auto fixed z-[80] w-[min(22rem,calc(100vw-5rem))] rounded-xl border border-white/15 bg-[#121820]/95 shadow-2xl shadow-black/50 backdrop-blur-md"
+      className="pointer-events-auto fixed z-[80] w-[min(22rem,calc(100vw-5rem))] rounded-xl border border-white/15 bg-[#141414]/95 shadow-2xl shadow-black/50 backdrop-blur-md"
       style={{ left: pos.x, top: pos.y }}
     >
       <div className="flex items-center gap-2 px-2.5 py-1.5">
@@ -437,7 +505,7 @@ function FloatingRangePanel({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-label={open ? 'Cerrar' : 'Abrir'}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-white/5 hover:text-teal-300"
+          className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-white/5 hover:text-zinc-300"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
             <path
@@ -468,7 +536,7 @@ function FloatingRangePanel({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') onApply()
                 }}
-                className="w-[5.5rem] rounded-md border border-white/10 bg-[#0d1117] px-2 py-1 font-mono text-sm text-slate-100 outline-none focus:border-teal-400/50 disabled:opacity-50"
+                className="w-[5.5rem] rounded-md border border-white/10 bg-[#050505] px-2 py-1 font-mono text-sm text-slate-100 outline-none focus:border-zinc-400/50 disabled:opacity-50"
               />
             </label>
             <span className="pb-1 text-slate-600">–</span>
@@ -486,14 +554,14 @@ function FloatingRangePanel({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') onApply()
                 }}
-                className="w-[5.5rem] rounded-md border border-white/10 bg-[#0d1117] px-2 py-1 font-mono text-sm text-slate-100 outline-none focus:border-teal-400/50 disabled:opacity-50"
+                className="w-[5.5rem] rounded-md border border-white/10 bg-[#050505] px-2 py-1 font-mono text-sm text-slate-100 outline-none focus:border-zinc-400/50 disabled:opacity-50"
               />
             </label>
             <button
               type="button"
               disabled={disabled}
               onClick={onApply}
-              className="rounded-md bg-teal-400/20 px-2.5 py-1 text-sm font-medium text-teal-300 hover:bg-teal-400/30 disabled:opacity-50"
+              className="rounded-md bg-zinc-400/20 px-2.5 py-1 text-sm font-medium text-zinc-300 hover:bg-zinc-400/30 disabled:opacity-50"
             >
               Ver
             </button>
@@ -512,9 +580,18 @@ function FloatingRangePanel({
             ))}
           </div>
           {error ? <p className="text-xs text-red-400">{error}</p> : null}
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] text-slate-500 uppercase">Modo</span>
+            <ListenDemodButtons value={listenDemod} onChange={onListenDemod} compact />
+          </div>
+          <p className="font-mono text-[10px] text-slate-500">
+            {span <= LIVE_WINDOW_MHZ + 0.05
+              ? 'Ventana fija: lectura en tiempo real'
+              : `Barrido del rango · máx ${MAX_SPAN_MHZ} MHz`}
+          </p>
           {viewLocked ? (
             <p className="font-mono text-[10px] text-amber-300/90">
-              Arrastra el RTA para escuchar · clic = ±200 kHz
+              Arrastra el RTA para escuchar · doble clic = ±200 kHz
             </p>
           ) : null}
         </div>

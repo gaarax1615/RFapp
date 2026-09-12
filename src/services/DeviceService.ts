@@ -27,4 +27,8 @@ export class DeviceService {
   remove(id: string): Promise<void> {
     return this.repository.remove(id)
   }
+
+  clearAll(): Promise<void> {
+    return this.repository.clearAll()
+  }
 }

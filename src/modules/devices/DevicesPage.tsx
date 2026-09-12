@@ -3,7 +3,7 @@ import { useAppStore } from '@/app/store'
 import { useServices } from '@/app/AppProviders'
 import type { DeviceType, RfDevice } from '@/types/device'
 import { createId, formatFrequencyMhz } from '@/utils/constants'
-import { DEVICE_TYPE_LABELS, deviceTypeLabel } from '@/utils/i18n'
+import { DEVICE_TYPE_LABELS, deviceTypeLabel, formatDeviceChannel } from '@/utils/i18n'
 
 const DEVICE_TYPES: DeviceType[] = [
   'Microphone',
@@ -77,6 +77,9 @@ export function DevicesPage() {
     setSaving(true)
     setError(null)
     try {
+      const previous = editingId
+        ? devices.find((d) => d.id === editingId)
+        : undefined
       const device: RfDevice = {
         id: editingId ?? createId('dev'),
         ...form,
@@ -85,6 +88,7 @@ export function DevicesPage() {
         brand: form.brand.trim(),
         model: form.model.trim(),
         notes: form.notes.trim(),
+        catalogId: previous?.catalogId,
       }
       await deviceService.upsert(device)
       const list = await deviceService.list()
@@ -97,6 +101,15 @@ export function DevicesPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const onClearAll = async () => {
+    if (!confirm('¿Borrar todos los dispositivos?')) return
+    await deviceService.clearAll()
+    setDevices([])
+    await refreshMonitor([])
+    setSelectedDeviceId(null)
+    resetForm()
   }
 
   const onEliminar = async (id: string) => {
@@ -125,8 +138,22 @@ export function DevicesPage() {
         </p>
         <h2 className="mt-1 text-2xl font-semibold tracking-tight">Dispositivos</h2>
         <p className="mt-1 text-sm text-rf-muted">
-          Registro local · {devices.length} dispositivos · repositorio JSON
+          Inventario vacío para coordinar desde Escaneo · {devices.length} equipos
         </p>
+        {devices.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => void onClearAll()}
+            className="mt-3 text-xs text-red-400/80 hover:text-red-400"
+          >
+            Borrar todos
+          </button>
+        ) : (
+          <p className="mt-3 text-sm text-zinc-200/80">
+            Ve a <span className="font-medium text-zinc-300">Escaneo</span>, agrega
+            tus inalámbricos, calcula y pulsa «Usar esta opción».
+          </p>
+        )}
       </header>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
@@ -143,6 +170,13 @@ export function DevicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-rf-border">
+              {devices.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-sm text-rf-muted">
+                    No hay dispositivos. Agrégalos aquí o coordínalos en Escaneo.
+                  </td>
+                </tr>
+              ) : null}
               {devices.map((device) => (
                 <tr
                   key={device.id}
@@ -163,7 +197,7 @@ export function DevicesPage() {
                     </p>
                   </td>
                   <td className="hidden px-3 py-2.5 font-mono text-rf-muted sm:table-cell">
-                    {device.channel || '—'}
+                    {formatDeviceChannel(device.channel)}
                   </td>
                   <td className="px-3 py-2.5 font-mono text-rf-cyan">
                     {formatFrequencyMhz(device.frequencyMhz)}
@@ -178,7 +212,7 @@ export function DevicesPage() {
                       className={[
                         'rounded border px-2 py-0.5 font-mono text-[10px]',
                         device.enabled
-                          ? 'border-emerald-500/40 text-emerald-400'
+                          ? 'border-zinc-400/50 text-zinc-300'
                           : 'border-rf-border text-rf-muted',
                       ].join(' ')}
                     >

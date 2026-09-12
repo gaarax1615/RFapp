@@ -1,5 +1,5 @@
 import { createSpectrumSource, type SpectrumSourceKind } from '@/hardware/spectrum'
-import { MockChannelMetricsSource } from '@/hardware/metrics'
+import { SpectrumChannelMetricsSource } from '@/hardware/metrics'
 import { JsonDeviceRepository } from '@/repositories'
 import {
   AlertService,
@@ -9,6 +9,7 @@ import {
   MonitorService,
   SpectrumService,
 } from '@/services'
+import { SpectrumTunnel } from '@/modules/spectrum/SpectrumTunnel'
 import { DEFAULT_SPECTRUM_CONFIG } from '@/utils/constants'
 
 /**
@@ -21,9 +22,13 @@ export function createAppServices() {
   const spectrumSource = createSpectrumSource('mock' satisfies SpectrumSourceKind)
   const spectrum = new SpectrumService(spectrumSource)
   const devices = new DeviceService(new JsonDeviceRepository())
-  const monitor = new MonitorService(new MockChannelMetricsSource())
+  const monitor = new MonitorService(
+    new SpectrumChannelMetricsSource(spectrum, devices),
+  )
   const alerts = new AlertService()
   const audio = new AudioMonitorService()
+  const tunnel = new SpectrumTunnel()
+  spectrum.setViewReset(() => tunnel.reset())
 
   return {
     spectrum,
@@ -32,6 +37,7 @@ export function createAppServices() {
     alerts,
     audio,
     hardware,
+    tunnel,
     defaultSpectrumConfig: { ...DEFAULT_SPECTRUM_CONFIG },
   }
 }

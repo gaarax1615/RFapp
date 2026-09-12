@@ -73,10 +73,10 @@ export class SpectrumRenderer {
     if (plotW <= 0 || plotH <= 0) return
 
     // Panel
-    ctx.fillStyle = '#0b1017'
+    ctx.fillStyle = '#050505'
     ctx.fillRect(0, 0, w, h)
 
-    ctx.fillStyle = '#101821'
+    ctx.fillStyle = '#141414'
     ctx.fillRect(pad.left, pad.top, plotW, plotH)
 
     this.drawGrid(ctx, pad.left, pad.top, plotW, plotH, frame)
@@ -205,7 +205,7 @@ export class SpectrumRenderer {
       if (c === 0) ctx.moveTo(px, py)
       else ctx.lineTo(px, py)
     }
-    ctx.strokeStyle = '#5eead4'
+    ctx.strokeStyle = '#f5f5f5'
     ctx.lineWidth = 1.4
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
@@ -355,7 +355,7 @@ export class SpectrumRenderer {
       ctx.fillStyle = selected ? '#0f172a' : '#fdba74'
       ctx.fillText(name, px + pw / 2, py + 15)
       ctx.font = '500 10px "IBM Plex Mono", monospace'
-      ctx.fillStyle = selected ? '#0f172a' : '#5eead4'
+      ctx.fillStyle = selected ? '#050505' : '#f5f5f5'
       ctx.fillText(freq, px + pw / 2, py + 31)
     }
   }
@@ -373,9 +373,9 @@ export class SpectrumRenderer {
     const x1 = Math.max(x, Math.min(x + w, Math.max(sel.x0, sel.x1)))
     if (x1 - x0 < 2) return
 
-    ctx.fillStyle = 'rgba(94, 234, 212, 0.12)'
+    ctx.fillStyle = 'rgba(245, 245, 245, 0.12)'
     ctx.fillRect(x0, y, x1 - x0, h)
-    ctx.strokeStyle = 'rgba(94, 234, 212, 0.85)'
+    ctx.strokeStyle = 'rgba(245, 245, 245, 0.85)'
     ctx.lineWidth = 1.5
     ctx.strokeRect(x0 + 0.5, y + 0.5, x1 - x0 - 1, h - 1)
   }
@@ -511,8 +511,8 @@ export class SpectrumRenderer {
     const rbwApprox = (span / frame.powerDb.length) * 1000
 
     // Legend chips
-    drawChip(ctx, x, y - 28, 'VIVO', '#5eead4', '#0f172a')
-    drawChip(ctx, x + 58, y - 28, 'PK', 'rgba(226, 232, 240, 0.7)', '#0f172a')
+    drawChip(ctx, x, y - 28, 'VIVO', '#f5f5f5', '#050505')
+    drawChip(ctx, x + 58, y - 28, 'PK', 'rgba(247, 244, 251, 0.75)', '#050505')
 
     ctx.textAlign = 'right'
     ctx.font = '11px "IBM Plex Mono", monospace'

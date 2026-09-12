@@ -35,3 +35,28 @@ export const HARDWARE_STATE_LABELS: Record<HardwareConnectionState, string> = {
 export function deviceTypeLabel(type: DeviceType): string {
   return DEVICE_TYPE_LABELS[type] ?? type
 }
+
+/** Variación del nivel RF: bajo = la frecuencia se mantiene. */
+export function stabilityLabel(stabilityDb: number, sampleCount = 8): string {
+  if (sampleCount < 3) return 'Midiendo…'
+  if (stabilityDb < 2) return 'Estable'
+  if (stabilityDb < 4) return 'Aceptable'
+  if (stabilityDb < 8) return 'Irregular'
+  return 'Inestable'
+}
+
+export function formatStability(stabilityDb: number, sampleCount = 8): string {
+  if (sampleCount < 3) return 'Midiendo…'
+  return `${stabilityLabel(stabilityDb, sampleCount)} · ${stabilityDb.toFixed(1)} dB`
+}
+
+/** Grupo B Canal 8 → B8 (no B-8). */
+export function formatDeviceChannel(channel: string | undefined): string {
+  if (!channel?.trim()) return '—'
+  const raw = channel.trim()
+  const fromHardware = raw.match(/^Grupo\s+([A-Za-z0-9]+)\s*·\s*Canal\s+([A-Za-z0-9]+)$/i)
+  if (fromHardware) return `${fromHardware[1]!.toUpperCase()}${fromHardware[2]}`
+  const dashed = raw.match(/^([A-Za-z0-9]+)\s*[-–]\s*([A-Za-z0-9]+)$/)
+  if (dashed) return `${dashed[1]!.toUpperCase()}${dashed[2]}`
+  return raw
+}

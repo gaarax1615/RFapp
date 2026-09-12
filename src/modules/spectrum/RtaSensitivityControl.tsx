@@ -92,11 +92,11 @@ export function RtaSensitivityControl({
         className="group relative w-3 min-h-0 flex-1 cursor-ns-resize touch-none rounded-full bg-white/10"
       >
         <div
-          className="absolute inset-x-0 bottom-0 rounded-full bg-teal-400/45 group-hover:bg-teal-400/70"
+          className="absolute inset-x-0 bottom-0 rounded-full bg-zinc-400/45 group-hover:bg-zinc-400/70"
           style={{ height: `${value}%` }}
         />
         <div
-          className="absolute left-1/2 h-2.5 w-4 -translate-x-1/2 rounded-sm bg-teal-100 shadow shadow-black/40"
+          className="absolute left-1/2 h-2.5 w-4 -translate-x-1/2 rounded-sm bg-zinc-100 shadow shadow-black/40"
           style={{ bottom: `calc(${value}% - 5px)` }}
         />
       </div>

@@ -77,6 +77,8 @@ export class MockChannelMetricsSource implements ChannelMetricsSource {
         signalDbm,
         noiseFloorDbm,
         snrDb,
+        stabilityDb: 1.2 + Math.abs(Math.sin(now / 4000 + index)),
+        sampleCount: sim.history.length,
         status,
       }
     })

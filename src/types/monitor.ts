@@ -7,6 +7,10 @@ export interface ChannelMetrics {
   noiseFloorDbm: number
   snrDb: number
   status: SignalStatus
+  /** Desviación del nivel entre visitas a esa frecuencia. Bajo = estable. */
+  stabilityDb: number
+  /** Muestras frescas usadas para la estabilidad (no el decay del barrido). */
+  sampleCount: number
 }
 
 export interface ChannelMetricsSource {

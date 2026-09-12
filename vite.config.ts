@@ -13,5 +13,17 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    proxy: {
+      '/sdr-api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/sdr-api/, ''),
+      },
+      '/sdr-ws': {
+        target: 'ws://127.0.0.1:8787',
+        ws: true,
+        rewrite: (path) => path.replace(/^\/sdr-ws/, ''),
+      },
+    },
   },
 })

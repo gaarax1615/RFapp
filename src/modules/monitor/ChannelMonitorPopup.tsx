@@ -4,7 +4,7 @@ import { useServices } from '@/app/AppProviders'
 import { useAppStore } from '@/app/store'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatFrequencyMhz, STORAGE_KEYS } from '@/utils/constants'
-import { deviceTypeLabel } from '@/utils/i18n'
+import { deviceTypeLabel, formatDeviceChannel, formatStability } from '@/utils/i18n'
 import { clickListenBand } from '@/modules/spectrum/rfListen'
 import type { RfDevice } from '@/types/device'
 import type { ChannelMetrics } from '@/types/monitor'
@@ -49,11 +49,15 @@ export function ChannelMonitorPopup({
   metrics,
   alerts,
   onClose,
+  onRescan,
+  rescanBusy = false,
 }: {
   device: RfDevice
   metrics?: ChannelMetrics
   alerts: RfAlert[]
   onClose: () => void
+  onRescan?: () => void
+  rescanBusy?: boolean
 }) {
   const { monitor, spectrum, audio } = useServices()
   const setListenBand = useAppStore((s) => s.setListenBand)
@@ -72,7 +76,9 @@ export function ChannelMonitorPopup({
     moved: boolean
   } | null>(null)
 
-  const title = device.channel ? `${device.name} - ${device.channel}` : device.name
+  const title = device.channel
+    ? `${device.name} - ${formatDeviceChannel(device.channel)}`
+    : device.name
   const deviceAlerts = alerts.filter((a) => a.deviceId === device.id).slice(0, 3)
   const listeningHere =
     listenBand != null &&
@@ -164,7 +170,7 @@ export function ChannelMonitorPopup({
   }
 
   const onStopListen = async () => {
-    await audio.stop()
+    await audio.stop(spectrum)
     setListenBand(null)
   }
 
@@ -173,7 +179,7 @@ export function ChannelMonitorPopup({
       ref={panelRef}
       role="dialog"
       aria-label={`Monitoreo ${title}`}
-      className="fixed z-[90] flex w-[min(22rem,calc(100vw-1.5rem))] max-h-[min(36rem,calc(100vh-1.5rem))] flex-col overflow-hidden rounded-xl border border-orange-400/35 bg-[#121820]/97 shadow-2xl shadow-black/60 backdrop-blur-md"
+      className="fixed z-[90] flex w-[min(22rem,calc(100vw-1.5rem))] max-h-[min(36rem,calc(100vh-1.5rem))] flex-col overflow-hidden rounded-xl border border-orange-400/35 bg-[#141414]/97 shadow-2xl shadow-black/60 backdrop-blur-md"
       style={{ left: pos.x, top: pos.y }}
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-2.5 py-1.5">
@@ -195,7 +201,7 @@ export function ChannelMonitorPopup({
             <span className="block truncate font-semibold text-sm text-orange-100 uppercase">
               {title}
             </span>
-            <span className="block font-mono text-[11px] text-teal-300">
+            <span className="block font-mono text-[11px] text-zinc-300">
               {formatFrequencyMhz(device.frequencyMhz)}
             </span>
           </span>
@@ -233,7 +239,17 @@ export function ChannelMonitorPopup({
             label="SNR"
             value={metrics ? `${metrics.snrDb.toFixed(0)} dB` : '—'}
             ratio={metrics ? metrics.snrDb / 50 : 0}
-            color="bg-emerald-400"
+            color="bg-zinc-400"
+          />
+          <LevelRow
+            label="Estabilidad"
+            value={
+              metrics
+                ? formatStability(metrics.stabilityDb, metrics.sampleCount)
+                : '—'
+            }
+            ratio={metrics ? 1 - Math.min(1, metrics.stabilityDb / 10) : 0}
+            color="bg-white"
           />
         </div>
 
@@ -287,6 +303,16 @@ export function ChannelMonitorPopup({
               Escuchar canal
             </button>
           )}
+          {onRescan ? (
+            <button
+              type="button"
+              onClick={onRescan}
+              disabled={rescanBusy}
+              className="rounded-md border border-zinc-400/40 bg-zinc-400/10 px-2.5 py-1 font-mono text-[11px] text-zinc-200 hover:bg-zinc-400/20 disabled:opacity-40"
+            >
+              {rescanBusy ? 'Reescaneando…' : 'Reescanear este'}
+            </button>
+          ) : null}
         </div>
 
         <div>

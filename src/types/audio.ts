@@ -8,6 +8,14 @@ export type AudioMonitorStatus =
   | 'listening'
   | 'error'
 
+export type ListenDemod = 'nfm' | 'wfm' | 'am'
+
+export const LISTEN_DEMODS: { id: ListenDemod; label: string; hint: string }[] = [
+  { id: 'nfm', label: 'NFM', hint: 'Petacas, IEM, walkie' },
+  { id: 'wfm', label: 'WFM', hint: 'Radio FM comercial' },
+  { id: 'am', label: 'AM', hint: 'AM / aviación' },
+]
+
 export interface RfListenBand {
   startMhz: number
   endMhz: number

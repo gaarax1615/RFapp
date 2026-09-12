@@ -55,6 +55,14 @@ export class AlertService {
           device.id,
           `intf:${device.id}`,
         )
+      } else if (m.sampleCount >= 6 && m.stabilityDb > 6) {
+        this.push(
+          'warning',
+          `Frecuencia inestable en ${device.name} (±${m.stabilityDb.toFixed(1)} dB)`,
+          device.frequencyMhz,
+          device.id,
+          `stab:${device.id}`,
+        )
       } else if (m.status === 'WARNING' && m.noiseFloorDbm > -80) {
         this.push(
           'warning',

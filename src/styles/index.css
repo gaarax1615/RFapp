@@ -11,14 +11,14 @@
   --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
-  --color-rf-bg: #0b0e12;
-  --color-rf-panel: #12171f;
-  --color-rf-elevated: #1a212c;
-  --color-rf-border: #2a3340;
-  --color-rf-text: #e8edf4;
-  --color-rf-muted: #8b97a8;
-  --color-rf-cyan: #3ecfcf;
-  --color-rf-amber: #e8a838;
+  --color-rf-bg: #050505;
+  --color-rf-panel: #111111;
+  --color-rf-elevated: #1a1a1a;
+  --color-rf-border: #2e2e2e;
+  --color-rf-text: #f5f5f5;
+  --color-rf-muted: #9a9a9a;
+  --color-rf-cyan: #f5f5f5;
+  --color-rf-amber: #d4d4d4;
 }
 
 @layer base {

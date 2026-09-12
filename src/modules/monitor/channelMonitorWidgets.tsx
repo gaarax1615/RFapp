@@ -63,16 +63,26 @@ function drawMini(
 ): void {
   const w = canvas.width
   const h = canvas.height
-  ctx.fillStyle = '#0b0e12'
+  ctx.fillStyle = '#050505'
   ctx.fillRect(0, 0, w, h)
 
   const half = 1
   const start = centerMhz - half
   const end = centerMhz + half
-  const minDb = -110
-  const maxDb = -20
+  const windowDb: number[] = []
+  for (let i = 0; i < frame.powerDb.length; i++) {
+    const freq = frame.startFrequencyMhz + i * frame.binWidthMhz
+    if (freq < start || freq > end) continue
+    const v = frame.powerDb[i]
+    if (v !== undefined && Number.isFinite(v) && v > -93) windowDb.push(v)
+  }
+  windowDb.sort((a, b) => a - b)
+  const p20 = windowDb[Math.floor(windowDb.length * 0.2)] ?? -80
+  const p99 = windowDb[Math.floor(windowDb.length * 0.98)] ?? -50
+  const minDb = p20 - 8
+  const maxDb = Math.max(p99 + 6, minDb + 18)
 
-  ctx.strokeStyle = '#3ecfcf'
+  ctx.strokeStyle = '#f5f5f5'
   ctx.lineWidth = 1.5
   ctx.beginPath()
   let started = false
@@ -125,7 +135,7 @@ export function HistoryChart({ values }: { values: number[] }) {
         </p>
       ) : (
         <svg viewBox="0 0 100 40" className="h-full w-full" preserveAspectRatio="none">
-          <path d={path} fill="none" stroke="#3ecfcf" strokeWidth="1.2" />
+          <path d={path} fill="none" stroke="#f5f5f5" strokeWidth="1.2" />
         </svg>
       )}
     </div>

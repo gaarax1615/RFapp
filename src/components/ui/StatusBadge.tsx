@@ -9,23 +9,23 @@ import {
 
 const hardwareStyles: Record<HardwareConnectionState, string> = {
   simulated: 'bg-rf-cyan/15 text-rf-cyan border-rf-cyan/40',
-  connected: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40',
-  connecting: 'bg-amber-500/15 text-amber-400 border-amber-500/40',
-  disconnected: 'bg-zinc-500/15 text-zinc-400 border-zinc-500/40',
-  error: 'bg-red-500/15 text-red-400 border-red-500/40',
+  connected: 'bg-white/10 text-white border-zinc-400/50',
+  connecting: 'bg-zinc-500/15 text-zinc-200 border-zinc-400/40',
+  disconnected: 'bg-black text-zinc-400 border-white/20',
+  error: 'bg-black text-white border-white/40',
 }
 
 const signalStyles: Record<SignalStatus, string> = {
-  GOOD: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40',
-  WARNING: 'bg-amber-500/15 text-amber-400 border-amber-500/40',
-  INTERFERENCE: 'bg-orange-500/15 text-orange-400 border-orange-500/40',
-  NO_SIGNAL: 'bg-red-500/15 text-red-400 border-red-500/40',
+  GOOD: 'bg-white/10 text-white border-zinc-400/50',
+  WARNING: 'bg-zinc-500/15 text-zinc-200 border-zinc-400/40',
+  INTERFERENCE: 'bg-black text-zinc-200 border-white/35',
+  NO_SIGNAL: 'bg-black text-zinc-400 border-white/20',
 }
 
 const alertStyles: Record<AlertSeverity, string> = {
-  info: 'bg-sky-500/15 text-sky-300 border-sky-500/40',
-  warning: 'bg-amber-500/15 text-amber-400 border-amber-500/40',
-  critical: 'bg-red-500/15 text-red-400 border-red-500/40',
+  info: 'bg-rf-cyan/15 text-rf-cyan border-rf-cyan/40',
+  warning: 'bg-zinc-500/15 text-zinc-200 border-zinc-400/40',
+  critical: 'bg-black text-white border-white/40',
 }
 
 type Props =

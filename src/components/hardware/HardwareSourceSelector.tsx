@@ -63,7 +63,7 @@ export function HardwareSourceSelector({ compact = false }: Props) {
           disabled={busy}
           value={selectedKind}
           onChange={(e) => void select(e.target.value as SpectrumSourceKind)}
-          className="rounded-md border border-white/10 bg-[#0d1117] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-teal-400/50"
+          className="rounded-md border border-white/10 bg-[#050505] px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-zinc-400/50"
         >
           {options.length === 0 ? (
             <option value="mock">Simulado</option>
@@ -80,7 +80,7 @@ export function HardwareSourceSelector({ compact = false }: Props) {
           type="button"
           disabled={busy}
           onClick={() => void refresh()}
-          className="rounded-md border border-white/10 px-2 py-1.5 text-xs text-slate-300 hover:border-teal-400/40 hover:text-teal-300 disabled:opacity-50"
+          className="rounded-md border border-white/10 px-2 py-1.5 text-xs text-slate-300 hover:border-zinc-400/40 hover:text-zinc-300 disabled:opacity-50"
         >
           Buscar
         </button>
@@ -93,13 +93,13 @@ export function HardwareSourceSelector({ compact = false }: Props) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-rf-muted">
-          Elige simulado o hardware detectado por USB / driver.
+          Elige simulado, backend Python local o un SDR detectado.
         </p>
         <button
           type="button"
           disabled={busy}
           onClick={() => void refresh()}
-          className="rounded-md border border-rf-border px-2.5 py-1.5 text-xs text-slate-300 hover:border-teal-400/40 hover:text-teal-300 disabled:opacity-50"
+          className="rounded-md border border-rf-border px-2.5 py-1.5 text-xs text-slate-300 hover:border-zinc-400/40 hover:text-zinc-300 disabled:opacity-50"
         >
           {busy ? 'Buscando…' : 'Buscar de nuevo'}
         </button>
@@ -118,7 +118,7 @@ export function HardwareSourceSelector({ compact = false }: Props) {
                 className={[
                   'flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition',
                   active
-                    ? 'border-teal-400/50 bg-teal-400/10'
+                    ? 'border-zinc-400/50 bg-zinc-400/10'
                     : opt.available
                       ? 'border-rf-border bg-rf-bg hover:border-white/20'
                       : 'cursor-not-allowed border-rf-border/60 bg-rf-bg/50 opacity-60',
@@ -128,13 +128,13 @@ export function HardwareSourceSelector({ compact = false }: Props) {
                   className={[
                     'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
                     active
-                      ? 'border-teal-400 bg-teal-400'
+                      ? 'border-zinc-400 bg-zinc-400'
                       : 'border-white/30 bg-transparent',
                   ].join(' ')}
                   aria-hidden
                 >
                   {active ? (
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#0d1117]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#050505]" />
                   ) : null}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -143,7 +143,7 @@ export function HardwareSourceSelector({ compact = false }: Props) {
                       {opt.label}
                     </span>
                     {opt.available ? (
-                      <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-emerald-400">
+                      <span className="rounded border border-zinc-400/50 bg-zinc-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-zinc-200">
                         Disponible
                       </span>
                     ) : (
@@ -152,7 +152,7 @@ export function HardwareSourceSelector({ compact = false }: Props) {
                       </span>
                     )}
                     {active ? (
-                      <span className="rounded border border-teal-400/40 bg-teal-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-teal-300">
+                      <span className="rounded border border-zinc-400/40 bg-zinc-400/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-zinc-300">
                         Activo
                       </span>
                     ) : null}

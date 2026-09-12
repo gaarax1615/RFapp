@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatFrequencyMhz } from '@/utils/constants'
-import { deviceTypeLabel, SIGNAL_STATUS_LABELS } from '@/utils/i18n'
+import { formatDeviceChannel, formatStability } from '@/utils/i18n'
 import type { RfDevice } from '@/types/device'
 import type { ChannelMetrics } from '@/types/monitor'
 import type { RfAlert } from '@/types/alerts'
@@ -32,7 +32,7 @@ export function MonitorCard({
       ? 'border-red-400/50 hover:border-red-400/70'
       : worst === 'warning'
         ? 'border-amber-400/45 hover:border-amber-400/65'
-        : 'border-rf-border hover:border-teal-400/40'
+        : 'border-rf-border hover:border-zinc-400/40'
 
   return (
     <Link
@@ -47,7 +47,7 @@ export function MonitorCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-mono text-[10px] tracking-wider text-rf-muted uppercase">
-            {device.channel || '—'}
+            {formatDeviceChannel(device.channel)}
           </p>
           <h3
             className={[
@@ -67,7 +67,7 @@ export function MonitorCard({
 
       <p
         className={[
-          'mt-2 font-mono font-semibold text-teal-300',
+          'mt-2 font-mono font-semibold text-zinc-300',
           compact ? 'text-xl' : 'text-2xl',
         ].join(' ')}
       >
@@ -78,8 +78,21 @@ export function MonitorCard({
         <Metric label="Señal" value={metrics ? formatDbm(metrics.signalDbm) : '—'} />
         <Metric label="Ruido" value={metrics ? formatDbm(metrics.noiseFloorDbm) : '—'} />
         <Metric label="SNR" value={metrics ? `${metrics.snrDb.toFixed(0)} dB` : '—'} />
-        <Metric label="Tipo" value={deviceTypeLabel(device.type)} />
+        <Metric
+          label="Estabilidad"
+          value={
+            metrics
+              ? formatStability(metrics.stabilityDb, metrics.sampleCount)
+              : '—'
+          }
+        />
       </dl>
+
+      {device.awaitingHardware && (!metrics || metrics.snrDb < 8) ? (
+        <p className="mt-2 text-[11px] text-amber-200/90">
+          Frecuencia nueva en el software. Gira el BLX a {formatDeviceChannel(device.channel)}.
+        </p>
+      ) : null}
 
       {metrics ? <SignalBar metrics={metrics} compact={compact} /> : null}
 
@@ -105,7 +118,7 @@ export function MonitorCard({
                     ? 'border-red-400/30 bg-red-500/10'
                     : alert.severity === 'warning'
                       ? 'border-amber-400/30 bg-amber-500/10'
-                      : 'border-sky-400/25 bg-sky-500/10',
+                      : 'border-zinc-400/25 bg-zinc-500/10',
                 ].join(' ')}
               >
                 <div className="mb-0.5 flex items-center gap-1.5">
@@ -163,7 +176,7 @@ function SignalBar({
       </div>
       <div className="h-2 overflow-hidden rounded bg-rf-bg">
         <div
-          className="h-full rounded bg-teal-400 transition-[width] duration-300"
+          className="h-full rounded bg-zinc-400 transition-[width] duration-300"
           style={{ width: `${level * 100}%` }}
         />
       </div>
@@ -175,36 +188,38 @@ function formatDbm(v: number): string {
   return `${v.toFixed(0)} dBm`
 }
 
-function barsFromMetrics(metrics?: ChannelMetrics): {
+function barsFromMetrics(
+  metrics?: ChannelMetrics,
+  awaitingHardware?: boolean,
+): {
   bars: number
   tone: string
   label: string
 } {
-  if (!metrics) {
-    return { bars: 0, tone: 'text-slate-500', label: 'Sin datos' }
+  if (!metrics || metrics.sampleCount === 0) {
+    return { bars: 0, tone: 'text-slate-500', label: 'Leyendo…' }
   }
 
-  if (metrics.status === 'NO_SIGNAL' || metrics.status === 'INTERFERENCE') {
+  const snr = metrics.snrDb
+  if (snr < 8) {
     return {
-      bars: metrics.status === 'NO_SIGNAL' ? 0 : 1,
-      tone: 'text-red-500',
-      label: SIGNAL_STATUS_LABELS[metrics.status],
+      bars: 0,
+      tone: 'text-slate-500',
+      label: awaitingHardware
+        ? 'Pon este grupo/canal en el BLX'
+        : 'Sin portadora',
     }
   }
-
-  if (metrics.status === 'WARNING' || metrics.snrDb < 18) {
-    return {
-      bars: 2,
-      tone: 'text-yellow-400',
-      label: metrics.status === 'WARNING' ? SIGNAL_STATUS_LABELS.WARNING : 'Regular',
-    }
+  if (snr < 10 || metrics.status === 'INTERFERENCE') {
+    return { bars: 1, tone: 'text-red-500', label: 'Sucia / débil' }
   }
-
-  return {
-    bars: 4,
-    tone: 'text-green-500',
-    label: SIGNAL_STATUS_LABELS.GOOD,
+  if (snr < 14 || metrics.status === 'WARNING') {
+    return { bars: 2, tone: 'text-yellow-400', label: 'Regular' }
   }
+  if (snr < 22) {
+    return { bars: 3, tone: 'text-zinc-300', label: 'Buena' }
+  }
+  return { bars: 4, tone: 'text-white', label: 'Muy buena' }
 }
 
 function CellularSignalIcon({ bars }: { bars: number }) {
@@ -244,9 +259,9 @@ export function MiniMonitorCard({
   selected?: boolean
   onSelect?: (deviceId: string) => void
 }) {
-  const signal = barsFromMetrics(metrics)
+  const signal = barsFromMetrics(metrics, device.awaitingHardware)
   const title = device.channel
-    ? `${device.name} - ${device.channel}`
+    ? `${device.name} - ${formatDeviceChannel(device.channel)}`
     : device.name
   const ref = useRef<HTMLButtonElement>(null)
 
@@ -260,13 +275,13 @@ export function MiniMonitorCard({
       ref={ref}
       type="button"
       onClick={() => onSelect?.(device.id)}
-      title={`${title} · ${signal.label}`}
+      title={`${title} · ${signal.label}. Enciende ese transmisor (guitarra, bajo, voz, acordeón…): verde = frecuencia buena.`}
       aria-pressed={selected}
       className={[
         'flex min-w-[9.5rem] max-w-[14rem] flex-1 items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-all duration-200',
         selected
           ? '-translate-y-1 scale-[1.06] z-10 border-orange-400 bg-orange-400/15 shadow-[0_8px_24px_rgba(251,146,60,0.35)] ring-2 ring-orange-400/80'
-          : 'border-white/10 bg-[#121820] hover:border-teal-400/40 hover:bg-[#161e28]',
+          : 'border-white/10 bg-[#141414] hover:border-zinc-400/40 hover:bg-[#1a1a1a]',
       ].join(' ')}
     >
       <div className="min-w-0 flex-1">
@@ -281,10 +296,18 @@ export function MiniMonitorCard({
         <p
           className={[
             'mt-0.5 font-mono text-[11px]',
-            selected ? 'text-orange-100' : 'text-teal-300',
+            selected ? 'text-orange-100' : 'text-zinc-300',
           ].join(' ')}
         >
           {formatFrequencyMhz(device.frequencyMhz)}
+        </p>
+        <p
+          className={[
+            'font-mono text-[10px]',
+            selected ? 'text-orange-200/80' : 'text-slate-400',
+          ].join(' ')}
+        >
+          {signal.label}
         </p>
       </div>
       <span

@@ -90,7 +90,7 @@ export function QuickDeviceForm({
   return (
     <form
       onSubmit={(e) => void onSubmit(e)}
-      className="flex h-full flex-col rounded-xl border border-white/10 bg-[#121820] p-4"
+      className="flex h-full flex-col rounded-xl border border-white/10 bg-[#141414] p-4"
     >
       <div className="mb-3">
         <p className="font-mono text-[10px] tracking-[0.14em] text-slate-400 uppercase">
@@ -169,7 +169,7 @@ export function QuickDeviceForm({
       <button
         type="submit"
         disabled={saving}
-        className="mt-3 w-full rounded-md bg-teal-400/20 px-3 py-2.5 text-sm font-medium text-teal-300 hover:bg-teal-400/30 disabled:opacity-50"
+        className="mt-3 w-full rounded-md bg-zinc-400/20 px-3 py-2.5 text-sm font-medium text-zinc-300 hover:bg-zinc-400/30 disabled:opacity-50"
       >
         {saving ? 'Guardando…' : 'Agregar dispositivo'}
       </button>

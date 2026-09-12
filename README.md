@@ -13,12 +13,20 @@ Aplicación local/offline para monitoreo y coordinación de frecuencias RF en ev
 
 ## Desarrollo
 
+Frontend + Backend (RTL-SDR) a la vez:
+
+```bash
+./start.sh
+```
+
+O solo esta UI:
+
 ```bash
 npm install
 npm run dev
 ```
 
-Abre la URL de Vite (p. ej. `http://127.0.0.1:5173`).
+Abre `http://127.0.0.1:5173`. En Ajustes elige **Backend local**. Detalles: `Backend/README.md`.
 
 ## Módulos
 
@@ -44,4 +52,4 @@ La UI no depende de hardware concreto. Cambiar de mock a RTL-SDR/HackRF se hace 
 
 ## Próximo
 
-Tauri 2 scaffold · servidor LAN Axum · drivers SDR reales.
+HackRF en el backend Python · demodulación de audio real.

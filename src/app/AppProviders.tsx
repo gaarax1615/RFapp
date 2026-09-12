@@ -8,6 +8,7 @@ import {
 import { createAppServices, type AppServices } from './createAppServices'
 import { useAppStore } from './store'
 import { DEFAULT_SPECTRUM_CONFIG } from '@/utils/constants'
+import { kitPrimaryViewRange, readEventKit } from '@/modules/scan/eventKit'
 
 const ServicesContext = createContext<AppServices | null>(null)
 
@@ -29,6 +30,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
       alerts,
       hardware,
       audio,
+      tunnel,
       defaultSpectrumConfig,
     } = services
 
@@ -38,10 +40,20 @@ export function AppProviders({ children }: { children: ReactNode }) {
       const deviceList = await devices.list()
       if (cancelled) return
       store.setDevices(deviceList)
-      store.setSpectrumRange({
+
+      const kitIds = readEventKit()
+      store.setEventKitCatalogIds(kitIds)
+      const kitRange = kitPrimaryViewRange(kitIds)
+      const bootRange = kitRange ?? {
         startMhz: defaultSpectrumConfig.startFrequencyMhz,
         endMhz: defaultSpectrumConfig.endFrequencyMhz,
-      })
+      }
+      store.setSpectrumRange(bootRange)
+      const bootConfig = {
+        ...defaultSpectrumConfig,
+        startFrequencyMhz: bootRange.startMhz,
+        endFrequencyMhz: bootRange.endMhz,
+      }
 
       const options = await hardware.refresh()
       if (cancelled) return
@@ -56,11 +68,12 @@ export function AppProviders({ children }: { children: ReactNode }) {
       if (canUsePreferred && preferred !== 'mock') {
         try {
           await hardware.select(preferred, spectrum)
+          await spectrum.setRange(bootRange.startMhz, bootRange.endMhz)
         } catch {
-          await spectrum.start(defaultSpectrumConfig)
+          await spectrum.start(bootConfig)
         }
       } else {
-        await spectrum.start(defaultSpectrumConfig)
+        await spectrum.start(bootConfig)
       }
       if (cancelled) return
 
@@ -69,6 +82,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
       const enabledIds = deviceList.filter((d) => d.enabled).map((d) => d.id)
       await monitor.start(enabledIds)
+      tunnel.bind(spectrum)
 
       const unsubHardware = hardware.subscribe((state) => {
         useAppStore.getState().setHardwareOptions(state.options)
@@ -87,6 +101,17 @@ export function AppProviders({ children }: { children: ReactNode }) {
           (m) => m.status === 'GOOD' || m.status === 'WARNING',
         ).length
         useAppStore.getState().setActiveFrequencyCount(active)
+
+        const pending = currentDevices.filter(
+          (d) => d.awaitingHardware && metrics.some((m) => m.deviceId === d.id && m.snrDb >= 8),
+        )
+        if (pending.length > 0) {
+          const next = currentDevices.map((d) =>
+            pending.some((p) => p.id === d.id) ? { ...d, awaitingHardware: false } : d,
+          )
+          useAppStore.getState().setDevices(next)
+          for (const d of pending) void devices.upsert({ ...d, awaitingHardware: false })
+        }
       })
 
       let frameCount = 0
@@ -114,9 +139,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
       cleanup?.()
+      tunnel.unbind()
+      void audio.stop(spectrum)
       void spectrum.stop()
       void monitor.stop()
-      void audio.stop()
     }
   }, [services])
 

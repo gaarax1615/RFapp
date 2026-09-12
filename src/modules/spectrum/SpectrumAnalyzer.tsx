@@ -2,24 +2,25 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type Pointer
 import { useServices } from '@/app/AppProviders'
 import { useAppStore } from '@/app/store'
 import type { SpectrumFrame } from '@/types/spectrum'
-import { SpectrumRenderer } from './SpectrumRenderer'
-import { WaterfallRenderer } from '@/modules/waterfall/WaterfallRenderer'
 import { FrequencyRangeControls } from './FrequencyRangeControls'
 import { FrequencyAxis } from './FrequencyAxis'
 import { ListenBar } from './ListenBar'
+import type { ListenDemod } from '@/types/audio'
 import { RtaSensitivityControl } from './RtaSensitivityControl'
 import { clickListenBand, makeListenBand } from './rfListen'
 import { STORAGE_KEYS } from '@/utils/constants'
 import {
   clampRange,
   clampRtaSensitivity,
-  FULL_UHF,
+  DEFAULT_SWEEP,
+  LIVE_WINDOW_MHZ,
   RTA_SENSITIVITY,
   SPECTRUM_PAD,
   rtaDbWindow,
   xToFrequencyMhz,
   zoomAround,
 } from './spectrumRange'
+import { kitPrimaryViewRange } from '@/modules/scan/eventKit'
 
 const RTA_SPLIT_MIN = 0.22
 const RTA_SPLIT_MAX = 0.88
@@ -63,7 +64,7 @@ export function SpectrumAnalyzer({
   showWaterfall = true,
   solo = false,
 }: SpectrumAnalyzerProps) {
-  const { spectrum, audio } = useServices()
+  const { spectrum, audio, tunnel } = useServices()
   const devices = useAppStore((s) => s.devices)
   const selectedDeviceId = useAppStore((s) => s.selectedDeviceId)
   const setSelectedDeviceId = useAppStore((s) => s.setSelectedDeviceId)
@@ -72,14 +73,15 @@ export function SpectrumAnalyzer({
   const viewLocked = useAppStore((s) => s.viewLocked)
   const listenBand = useAppStore((s) => s.listenBand)
   const setListenBand = useAppStore((s) => s.setListenBand)
+  const listenDemod = useAppStore((s) => s.listenDemod)
+  const setListenDemod = useAppStore((s) => s.setListenDemod)
 
   const spectrumCanvasRef = useRef<HTMLCanvasElement>(null)
   const waterfallCanvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const waterfallContainerRef = useRef<HTMLDivElement>(null)
   const columnRef = useRef<HTMLDivElement>(null)
-  const rendererRef = useRef(new SpectrumRenderer())
-  const waterfallRef = useRef(new WaterfallRenderer())
+  const rendererRef = useRef(tunnel.rta)
   const latestFrameRef = useRef<SpectrumFrame | null>(null)
   const sizeRef = useRef({ w: 0, h: 0 })
   const waterfallSizeRef = useRef({ w: 0, h: 0 })
@@ -87,7 +89,7 @@ export function SpectrumAnalyzer({
   const [hint, setHint] = useState(
     'Rueda = zoom · Arrastra = zoom a región · Bloquear = escuchar zona',
   )
-  const [liveHud, setLiveHud] = useState({ fps: 0, startMhz: 0, endMhz: 0 })
+  const [liveHud, setLiveHud] = useState({ fps: 0, startMhz: 0, endMhz: 0, hops: 1 })
   const [volume, setVolume] = useState(() => audio.getVolume())
   const [rtaRatio, setRtaRatio] = useState(readRtaSplit)
   const [rtaSensitivity, setRtaSensitivity] = useState(readRtaSensitivity)
@@ -99,38 +101,48 @@ export function SpectrumAnalyzer({
   const dbWindow = rtaDbWindow(rtaSensitivity)
 
   const resetTraces = useCallback(() => {
-    rendererRef.current.resetTraces()
-    const canvas = waterfallCanvasRef.current
-    if (!canvas) return
-    waterfallRef.current.attach(canvas)
-    const w = sizeRef.current.w || waterfallSizeRef.current.w
-    const h = waterfallSizeRef.current.h
-    if (w > 0 && h > 0) {
-      waterfallSizeRef.current = { w, h }
-      waterfallRef.current.resize(w, h)
+    tunnel.reset()
+  }, [tunnel])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.listenDemod)
+      if (raw === 'nfm' || raw === 'wfm' || raw === 'am') setListenDemod(raw)
+    } catch {
+      /* ignore */
     }
-  }, [])
+  }, [setListenDemod])
 
   const applyRange = useCallback(
     async (startMhz: number, endMhz: number) => {
       if (useAppStore.getState().viewLocked) return
       const next = clampRange(startMhz, endMhz)
       if (!next) return
-      await spectrum.setRange(next.startMhz, next.endMhz)
+      if (useAppStore.getState().listenBand) {
+        await audio.stop(spectrum)
+        setListenBand(null)
+      }
+      const changed = await spectrum.setRange(next.startMhz, next.endMhz)
       setSpectrumRange(next)
-      resetTraces()
+      if (changed) resetTraces()
     },
-    [spectrum, setSpectrumRange, resetTraces],
+    [audio, spectrum, setListenBand, setSpectrumRange, resetTraces],
   )
 
   const startListen = useCallback(
-    async (band: { startMhz: number; endMhz: number } | null) => {
+    async (
+      band: { startMhz: number; endMhz: number } | null,
+      demod?: ListenDemod,
+    ) => {
       if (!band) return
+      const mode = demod ?? useAppStore.getState().listenDemod
       try {
-        await audio.listenToBand(band, spectrum)
+        await audio.listenToBand(band, spectrum, mode)
         setListenBand(band)
         setHint(
-          `Escuchando ${band.startMhz.toFixed(3)}–${band.endMhz.toFixed(3)} MHz`,
+          audio.getListenKind() === 'sdr'
+            ? `${mode.toUpperCase()} ${band.startMhz.toFixed(3)}–${band.endMhz.toFixed(3)} MHz`
+            : `Escuchando ${band.startMhz.toFixed(3)}–${band.endMhz.toFixed(3)} MHz`,
         )
       } catch (e) {
         setHint(e instanceof Error ? e.message : 'No se pudo iniciar la escucha')
@@ -139,11 +151,20 @@ export function SpectrumAnalyzer({
     [audio, spectrum, setListenBand],
   )
 
+  const changeDemod = useCallback(
+    (mode: ListenDemod) => {
+      setListenDemod(mode)
+      const band = useAppStore.getState().listenBand
+      if (band) void startListen(band, mode)
+    },
+    [setListenDemod, startListen],
+  )
+
   const stopListen = useCallback(async () => {
-    await audio.stop()
+    await audio.stop(spectrum)
     setListenBand(null)
     setHint('Escucha detenida')
-  }, [audio, setListenBand])
+  }, [audio, spectrum, setListenBand])
 
   const onSplitPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -210,17 +231,6 @@ export function SpectrumAnalyzer({
   }, [showWaterfall, solo])
 
   useEffect(() => {
-    rendererRef.current.resetTraces()
-  }, [spectrumRange.startMhz, spectrumRange.endMhz])
-
-  useEffect(() => {
-    return () => {
-      void audio.stop()
-      useAppStore.getState().setListenBand(null)
-    }
-  }, [audio])
-
-  useEffect(() => {
     rendererRef.current.setOptions({
       devices,
       selectedDeviceId,
@@ -230,12 +240,12 @@ export function SpectrumAnalyzer({
       minDb: dbWindow.minDb,
       maxDb: dbWindow.maxDb,
     })
-    waterfallRef.current.setOptions({
+    tunnel.waterfall.setOptions({
       minDb: dbWindow.minDb,
       maxDb: dbWindow.maxDb,
     })
     redrawOverlay()
-  }, [devices, selectedDeviceId, redrawOverlay, showWaterfall, solo, listenBand, dbWindow.minDb, dbWindow.maxDb])
+  }, [devices, selectedDeviceId, redrawOverlay, showWaterfall, solo, listenBand, dbWindow.minDb, dbWindow.maxDb, tunnel])
 
   useEffect(() => {
     const spectrumEl = containerRef.current
@@ -253,6 +263,7 @@ export function SpectrumAnalyzer({
       if (!canvas || !spectrumEl) return
       const w = columnWidth()
       const h = Math.max(1, Math.floor(spectrumEl.getBoundingClientRect().height))
+      if (w < 8 || h < 8) return
       sizeRef.current = { w, h }
       const dpr = window.devicePixelRatio || 1
       canvas.width = Math.floor(w * dpr)
@@ -264,9 +275,10 @@ export function SpectrumAnalyzer({
       if (!waterfallEl || !waterfallCanvasRef.current) return
       const w = columnWidth()
       const h = Math.max(1, Math.floor(waterfallEl.getBoundingClientRect().height))
+      if (w < 8 || h < 8) return
       waterfallSizeRef.current = { w, h }
-      waterfallRef.current.attach(waterfallCanvasRef.current)
-      waterfallRef.current.resize(w, h)
+      tunnel.setViewSize(w, h)
+      tunnel.present(waterfallCanvasRef.current)
     }
 
     resizeSpectrum()
@@ -281,13 +293,9 @@ export function SpectrumAnalyzer({
     if (columnEl) ro.observe(columnEl)
 
     return () => ro.disconnect()
-  }, [showWaterfall, redrawOverlay])
+  }, [showWaterfall, redrawOverlay, tunnel])
 
   useEffect(() => {
-    if (waterfallCanvasRef.current) {
-      waterfallRef.current.attach(waterfallCanvasRef.current)
-    }
-
     return spectrum.subscribe((frame) => {
       latestFrameRef.current = frame
       const fps = fpsRef.current
@@ -301,6 +309,7 @@ export function SpectrumAnalyzer({
           fps: nextFps,
           startMhz: frame.startFrequencyMhz,
           endMhz: frame.endFrequencyMhz,
+          hops: frame.hopCount ?? 1,
         })
       }
       const canvas = spectrumCanvasRef.current
@@ -330,15 +339,16 @@ export function SpectrumAnalyzer({
         }
       }
 
-      if (showWaterfall) {
+      if (showWaterfall && waterfallCanvasRef.current) {
         const ww = sizeRef.current.w
         const wh = waterfallSizeRef.current.h
         if (ww > 0 && wh > 0) {
-          waterfallRef.current.pushFrame(frame, ww, wh)
+          tunnel.setViewSize(ww, wh)
+          tunnel.present(waterfallCanvasRef.current)
         }
       }
     })
-  }, [spectrum, showWaterfall, solo])
+  }, [spectrum, showWaterfall, solo, tunnel])
 
   const onPointerDown = (event: MouseEvent<HTMLCanvasElement>) => {
     if (event.button !== 0) return
@@ -417,13 +427,7 @@ export function SpectrumAnalyzer({
         frame,
         useAppStore.getState().devices,
       )
-      if (hit) {
-        setSelectedDeviceId(hit.id)
-        void startListen(clickListenBand(hit.frequencyMhz))
-        return
-      }
-      const freq = xToFrequencyMhz(x, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
-      if (freq != null) void startListen(clickListenBand(freq))
+      if (hit) setSelectedDeviceId(hit.id)
       redrawOverlay()
       return
     }
@@ -477,14 +481,16 @@ export function SpectrumAnalyzer({
     )
     if (hit) {
       setSelectedDeviceId(hit.id)
-      void applyRange(hit.frequencyMhz - 5, hit.frequencyMhz + 5)
-      setHint(`Zoom ±5 MHz → ${hit.name} (${hit.frequencyMhz.toFixed(3)} MHz)`)
+      const half = LIVE_WINDOW_MHZ / 2
+      void applyRange(hit.frequencyMhz - half, hit.frequencyMhz + half)
+      setHint(`Tiempo real → ${hit.name} (${hit.frequencyMhz.toFixed(3)} MHz)`)
       return
     }
     const freq = xToFrequencyMhz(x, w, frame.startFrequencyMhz, frame.endFrequencyMhz)
     if (freq != null) {
-      void applyRange(freq - 5, freq + 5)
-      setHint(`Zoom ±5 MHz en ${freq.toFixed(3)} MHz`)
+      const half = LIVE_WINDOW_MHZ / 2
+      void applyRange(freq - half, freq + half)
+      setHint(`Tiempo real en ${freq.toFixed(3)} MHz`)
     }
   }
 
@@ -533,14 +539,21 @@ export function SpectrumAnalyzer({
       setHint('Selecciona un dispositivo (clic en su marcador)')
       return
     }
-    void applyRange(selected.frequencyMhz - 5, selected.frequencyMhz + 5)
-    setHint(`Zoom a ${selected.name}`)
+    const half = LIVE_WINDOW_MHZ / 2
+    void applyRange(selected.frequencyMhz - half, selected.frequencyMhz + half)
+    setHint(`Tiempo real · ${selected.name}`)
   }
+
+  const eventKitCatalogIds = useAppStore((s) => s.eventKitCatalogIds)
 
   const fitDevices = () => {
     const enabled = devices.filter((d) => d.enabled)
     if (enabled.length === 0) {
-      void applyRange(FULL_UHF.startMhz, FULL_UHF.endMhz)
+      const kit = kitPrimaryViewRange(eventKitCatalogIds)
+      void applyRange(
+        kit?.startMhz ?? DEFAULT_SWEEP.startMhz,
+        kit?.endMhz ?? DEFAULT_SWEEP.endMhz,
+      )
       return
     }
     const freqs = enabled.map((d) => d.frequencyMhz)
@@ -552,8 +565,11 @@ export function SpectrumAnalyzer({
   }
 
   const resetZoom = () => {
-    void applyRange(FULL_UHF.startMhz, FULL_UHF.endMhz)
-    setHint('Rango UHF completo')
+    const kit = kitPrimaryViewRange(eventKitCatalogIds)
+    const start = kit?.startMhz ?? DEFAULT_SWEEP.startMhz
+    const end = kit?.endMhz ?? DEFAULT_SWEEP.endMhz
+    void applyRange(start, end)
+    setHint(`Kit · ${start.toFixed(0)}–${end.toFixed(0)} MHz`)
   }
 
   const axisStart = liveHud.startMhz || spectrumRange.startMhz
@@ -586,6 +602,9 @@ export function SpectrumAnalyzer({
         <ListenBar
           band={listenBand}
           volume={volume}
+          mode={audio.getListenKind()}
+          demod={listenDemod}
+          onDemod={changeDemod}
           onVolume={(v) => {
             setVolume(v)
             audio.setVolume(v)
@@ -599,8 +618,8 @@ export function SpectrumAnalyzer({
           ref={containerRef}
           className={
             solo
-              ? 'relative min-h-[80px] overflow-hidden bg-[#0d1117]'
-              : 'relative min-h-[80px] overflow-hidden rounded-t-xl border border-white/10 bg-[#0d1117] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
+              ? 'relative min-h-[80px] overflow-hidden bg-[#050505]'
+              : 'relative min-h-[80px] overflow-hidden rounded-t-xl border border-white/10 bg-[#050505] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
           }
           style={
             showWaterfall
@@ -633,6 +652,9 @@ export function SpectrumAnalyzer({
                     <ListenBar
                       band={listenBand}
                       volume={volume}
+                      mode={audio.getListenKind()}
+                      demod={listenDemod}
+                      onDemod={changeDemod}
                       onVolume={(v) => {
                         setVolume(v)
                         audio.setVolume(v)
@@ -643,21 +665,28 @@ export function SpectrumAnalyzer({
                 </div>
               ) : null}
               <div className="pointer-events-none absolute right-3 bottom-2 z-10 flex items-center gap-3 font-mono text-[11px] text-slate-400">
-                <span className="flex items-center gap-1.5 text-teal-300">
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-teal-300" />
+                <span className="flex items-center gap-1.5 text-zinc-300">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300" />
                   VIVO
                 </span>
                 <span>{liveHud.fps} fps</span>
                 <span>
                   {Math.round(dbWindow.minDb)}/{Math.round(dbWindow.maxDb)} dB
                 </span>
+                {liveHud.hops <= 1 ? (
+                  <span className="text-zinc-200">tiempo real</span>
+                ) : (
+                  <span className="text-amber-200/90">
+                    barrido {liveHud.hops} hops
+                  </span>
+                )}
                 {viewLocked ? (
                   <span className="text-amber-300">BLOQUEADO · arrastra para escuchar</span>
                 ) : null}
               </div>
             </>
           ) : (
-            <p className="pointer-events-none absolute right-2 bottom-2 rounded-md bg-[#0d1117]/85 px-2 py-1 font-mono text-[10px] text-slate-400">
+            <p className="pointer-events-none absolute right-2 bottom-2 rounded-md bg-[#050505]/85 px-2 py-1 font-mono text-[10px] text-slate-400">
               {viewLocked
                 ? 'Bloqueado · arrastra una zona para escucharla'
                 : hint}
@@ -677,8 +706,8 @@ export function SpectrumAnalyzer({
             onDoubleClick={onSplitDoubleClick}
             className="group relative z-20 shrink-0 cursor-row-resize touch-none select-none"
           >
-            <div className="relative h-1.5 bg-white/10 transition-colors group-hover:bg-teal-400/70 group-active:bg-teal-300">
-              <span className="absolute top-1/2 left-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-400 group-hover:bg-teal-100" />
+            <div className="relative h-1.5 bg-white/10 transition-colors group-hover:bg-zinc-400/70 group-active:bg-zinc-300">
+              <span className="absolute top-1/2 left-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-400 group-hover:bg-zinc-100" />
             </div>
             <FrequencyAxis startMhz={axisStart} endMhz={axisEnd} />
           </div>
@@ -689,8 +718,8 @@ export function SpectrumAnalyzer({
             ref={waterfallContainerRef}
             className={
               solo
-                ? 'relative min-h-[64px] overflow-hidden bg-[#0d1117]'
-                : 'relative min-h-[64px] overflow-hidden rounded-b-xl border border-t-0 border-white/10 bg-[#0d1117]'
+                ? 'relative min-h-[64px] overflow-hidden bg-[#081248]'
+                : 'relative min-h-[64px] overflow-hidden rounded-b-xl border border-t-0 border-white/10 bg-[#081248]'
             }
             style={{ flex: `${1 - rtaRatio} 1 0%` }}
           >

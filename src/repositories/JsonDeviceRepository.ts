@@ -1,25 +1,29 @@
-import { SEED_DEVICES } from '@/data'
 import type { DeviceRepository, RfDevice } from '@/types/device'
 import { STORAGE_KEYS } from '@/utils/constants'
 
+const LEGACY_DEVICE_KEYS = ['rf-monitor.devices.v1']
+
 /**
- * Local JSON persistence via localStorage.
- * Swap for Tauri FS / SQLite later without changing DeviceService.
+ * Persistencia local. Ya no se siembran equipos de demo.
  */
 export class JsonDeviceRepository implements DeviceRepository {
   private readonly key = STORAGE_KEYS.devices
 
   async list(): Promise<RfDevice[]> {
-    const raw = localStorage.getItem(this.key)
-    if (!raw) {
-      await this.persist(SEED_DEVICES)
-      return structuredClone(SEED_DEVICES)
+    for (const legacy of LEGACY_DEVICE_KEYS) {
+      try {
+        localStorage.removeItem(legacy)
+      } catch {
+        /* ignore */
+      }
     }
+    const raw = localStorage.getItem(this.key)
+    if (!raw) return []
     try {
       const parsed = JSON.parse(raw) as RfDevice[]
-      return Array.isArray(parsed) ? parsed : structuredClone(SEED_DEVICES)
+      return Array.isArray(parsed) ? parsed : []
     } catch {
-      return structuredClone(SEED_DEVICES)
+      return []
     }
   }
 
@@ -42,6 +46,10 @@ export class JsonDeviceRepository implements DeviceRepository {
   async remove(id: string): Promise<void> {
     const devices = await this.list()
     await this.persist(devices.filter((d) => d.id !== id))
+  }
+
+  async clearAll(): Promise<void> {
+    await this.persist([])
   }
 
   private async persist(devices: RfDevice[]): Promise<void> {

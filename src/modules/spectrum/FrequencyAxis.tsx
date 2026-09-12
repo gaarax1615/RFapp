@@ -11,7 +11,7 @@ export function FrequencyAxis({
   const ticks = span > 0 ? frequencyTicks(startMhz, endMhz) : []
 
   return (
-    <div className="relative h-6 shrink-0 bg-[#0d1117]">
+    <div className="relative h-6 shrink-0 bg-[#050505]">
       <div
         className="relative h-full"
         style={{

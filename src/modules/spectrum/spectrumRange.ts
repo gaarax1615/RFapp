@@ -36,9 +36,14 @@ export function rtaDbWindow(sensitivity: number): { minDb: number; maxDb: number
 }
 
 export const MIN_SPAN_MHZ = 1
+/** Ancho en el que el RTL se queda parado (~2 MHz de IQ): lectura en tiempo real. */
+export const LIVE_WINDOW_MHZ = 1.6
+/** El RTL barre este tramo a saltos; bandas de kit (BLX) caben en ≤40 MHz. */
+export const MAX_SPAN_MHZ = 40
 export const ABS_MIN_MHZ = 1
 export const ABS_MAX_MHZ = 6000
 export const FULL_UHF = { startMhz: 470, endMhz: 698 } as const
+export const DEFAULT_SWEEP = { startMhz: 614, endMhz: 638 } as const
 
 export function clampRange(
   startMhz: number,
@@ -53,8 +58,17 @@ export function clampRange(
     start = mid - MIN_SPAN_MHZ / 2
     end = mid + MIN_SPAN_MHZ / 2
   }
+  if (end - start > MAX_SPAN_MHZ) {
+    const mid = (start + end) / 2
+    start = mid - MAX_SPAN_MHZ / 2
+    end = mid + MAX_SPAN_MHZ / 2
+  }
   start = Math.max(ABS_MIN_MHZ, start)
   end = Math.min(ABS_MAX_MHZ, end)
+  if (end - start > MAX_SPAN_MHZ) {
+    if (start <= ABS_MIN_MHZ) end = start + MAX_SPAN_MHZ
+    else if (end >= ABS_MAX_MHZ) start = end - MAX_SPAN_MHZ
+  }
   if (end - start < MIN_SPAN_MHZ) return null
   return {
     startMhz: +start.toFixed(4),
@@ -70,7 +84,7 @@ export function zoomAround(
   factor: number,
 ): { startMhz: number; endMhz: number } | null {
   const span = endMhz - startMhz
-  const newSpan = Math.max(MIN_SPAN_MHZ, span * factor)
+  const newSpan = Math.min(MAX_SPAN_MHZ, Math.max(MIN_SPAN_MHZ, span * factor))
   const t = span > 0 ? (centerMhz - startMhz) / span : 0.5
   const nextStart = centerMhz - newSpan * t
   const nextEnd = centerMhz + newSpan * (1 - t)

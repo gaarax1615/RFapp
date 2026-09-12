@@ -3,7 +3,9 @@ import { Link, useParams } from 'react-router-dom'
 import { useAppStore } from '@/app/store'
 import { useServices } from '@/app/AppProviders'
 import { StatusBadge } from '@/components/ui/StatusBadge'
+import { useEventRescan } from '@/modules/scan/useEventRescan'
 import { formatFrequencyMhz } from '@/utils/constants'
+import { formatDeviceChannel, formatStability } from '@/utils/i18n'
 import { HistoryChart, LevelRow, MiniSpectrum } from './channelMonitorWidgets'
 
 export function ChannelDetailPage() {
@@ -16,6 +18,7 @@ export function ChannelDetailPage() {
   const device = devices.find((d) => d.id === deviceId)
   const metric = metrics.find((m) => m.deviceId === deviceId)
   const [history, setHistory] = useState<number[]>([])
+  const { busy, message, error, rescanOne } = useEventRescan()
 
   useEffect(() => {
     if (deviceId) setSelectedDeviceId(deviceId)
@@ -58,7 +61,7 @@ export function ChannelDetailPage() {
             ← Monitor
           </Link>
           <h2 className="mt-2 text-2xl font-semibold tracking-tight md:text-3xl">
-            <span className="font-mono text-rf-cyan">{device.channel}</span>
+            <span className="font-mono text-rf-cyan">{formatDeviceChannel(device.channel)}</span>
             <span className="mx-2 text-rf-muted">—</span>
             {device.name}
           </h2>
@@ -66,8 +69,20 @@ export function ChannelDetailPage() {
             {device.brand} {device.model} · {device.type}
           </p>
         </div>
-        {metric ? <StatusBadge kind="signal" value={metric.status} /> : null}
+        <div className="flex flex-col items-end gap-2">
+          {metric ? <StatusBadge kind="signal" value={metric.status} /> : null}
+          <button
+            type="button"
+            onClick={() => void rescanOne(device)}
+            disabled={busy}
+            className="rounded-md border border-zinc-400/40 px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-400/10 disabled:opacity-40"
+          >
+            {busy ? 'Reescaneando…' : 'Reescanear este'}
+          </button>
+        </div>
       </header>
+      {error ? <p className="text-sm text-red-400">{error}</p> : null}
+      {message ? <p className="text-sm text-zinc-200">{message}</p> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-lg border border-rf-border bg-rf-panel p-5">
@@ -95,9 +110,27 @@ export function ChannelDetailPage() {
               label="SNR"
               value={metric ? `${metric.snrDb.toFixed(0)} dB` : '—'}
               ratio={metric ? metric.snrDb / 50 : 0}
-              color="bg-emerald-400"
+              color="bg-zinc-400"
+            />
+            <LevelRow
+              label="Estabilidad"
+              value={
+                metric
+                  ? formatStability(metric.stabilityDb, metric.sampleCount)
+                  : '—'
+              }
+              ratio={
+                metric
+                  ? 1 - Math.min(1, metric.stabilityDb / 10)
+                  : 0
+              }
+              color="bg-white"
             />
           </div>
+          <p className="mt-4 text-xs text-rf-muted">
+            Zoom a ~1.6 MHz para ver ese canal en tiempo real. Un rango ancho se barre a saltos.
+            Haz zoom a ±1 MHz para ver esa frecuencia en vivo.
+          </p>
 
           <div className="mt-8 rounded-md border border-rf-border bg-rf-bg/60 p-3">
             <p className="text-[11px] tracking-wider text-rf-muted uppercase">
