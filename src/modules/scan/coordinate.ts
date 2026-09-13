@@ -114,6 +114,18 @@ function candidateOk(
   return true
 }
 
+function usableInGroup(
+  group: PresetGroup,
+  model: WirelessModel,
+  taken: Taken[],
+  blocked: number[],
+  score: FreqScore,
+): PresetChannel[] {
+  return group.channels
+    .filter((c) => candidateOk(c.mhz, model, taken, blocked))
+    .sort((a, b) => quietest(a.mhz, b.mhz, score))
+}
+
 function viableBlxGroups(
   model: WirelessModel,
   count: number,
@@ -122,12 +134,10 @@ function viableBlxGroups(
   score: FreqScore,
 ): { group: PresetGroup; usable: PresetChannel[] }[] {
   return (model.groups ?? [])
-    .map((group) => {
-      const usable = group.channels
-        .filter((c) => candidateOk(c.mhz, model, taken, blocked))
-        .sort((a, b) => quietest(a.mhz, b.mhz, score))
-      return { group, usable }
-    })
+    .map((group) => ({
+      group,
+      usable: usableInGroup(group, model, taken, blocked, score),
+    }))
     .filter((g) => g.usable.length >= count)
     .sort((a, b) => {
       const energyA = meanScore(a.usable.slice(0, count).map((c) => c.mhz), score)
@@ -135,6 +145,65 @@ function viableBlxGroups(
       if (energyA !== energyB) return energyA - energyB
       return b.usable.length - a.usable.length
     })
+}
+
+function assignChunk(
+  units: Resolved[],
+  model: WirelessModel,
+  group: PresetGroup,
+  usable: PresetChannel[],
+  taken: Taken[],
+): CoordAssignment[] {
+  const spare = usable.slice(units.length)
+  return units.map((row, index) => {
+    const channel = usable[index]!
+    taken.push({ mhz: channel.mhz, model })
+    return assignment(
+      row.unit,
+      model,
+      channel.mhz,
+      `${group.label} · Canal ${channel.label}`,
+      spare.slice(0, 8).map((c) => ({
+        frequencyMhz: c.mhz,
+        hardware: `${group.label} · Canal ${c.label}`,
+      })),
+    )
+  })
+}
+
+/** Llena el grupo más limpio y, si se acaba, sigue en el siguiente. */
+function assignBlxSpillover(
+  units: Resolved[],
+  model: WirelessModel,
+  takenStart: Taken[],
+  blocked: number[],
+  score: FreqScore,
+): { assignments: CoordAssignment[]; groupLabels: string[]; remaining: number } | null {
+  const taken = takenStart
+  const assignments: CoordAssignment[] = []
+  const groupLabels: string[] = []
+  const used = new Set<string>()
+  let leftover = [...units]
+  let remaining = 0
+
+  while (leftover.length > 0) {
+    const next = viableBlxGroups(model, 1, taken, blocked, score).find(
+      (option) => !used.has(option.group.id),
+    )
+    if (!next) break
+    used.add(next.group.id)
+    const usable = usableInGroup(next.group, model, taken, blocked, score)
+    if (usable.length === 0) continue
+    const take = Math.min(leftover.length, usable.length)
+    const chunk = leftover.slice(0, take)
+    leftover = leftover.slice(take)
+    groupLabels.push(next.group.label)
+    assignments.push(...assignChunk(chunk, model, next.group, usable, taken))
+    remaining = usable.length - take
+  }
+
+  if (leftover.length > 0) return null
+  return { assignments, groupLabels, remaining }
 }
 
 function meanScore(freqs: number[], score: FreqScore): number {
@@ -225,7 +294,7 @@ export interface LockedFreq {
   mhz: number
 }
 
-/** Otro canal para un solo equipo, sin mover al resto. BLX se queda en el mismo grupo. */
+/** Otro canal para un solo equipo, sin mover al resto. Prefiere el mismo grupo BLX; si se llena, busca otro. */
 export function rescanSingle(
   target: CoordUnit,
   currentMhz: number,
@@ -261,25 +330,21 @@ export function rescanSingle(
 
     if (siblings.length > 0 && group) {
       const usable = usableIn(group)
-      if (usable.length === 0) {
+      if (usable.length > 0) {
+        const pick = usable[0]!
         return {
-          ok: false,
-          error: `No hay otro canal libre en ${group.label} para ${target.name}. Reescanear todos los ${model.bandLabel}.`,
+          ok: true,
+          assignment: assignment(
+            target,
+            model,
+            pick.mhz,
+            `${group.label} · Canal ${pick.label}`,
+            usable.slice(1, 6).map((channel) => ({
+              frequencyMhz: channel.mhz,
+              hardware: `${group.label} · Canal ${channel.label}`,
+            })),
+          ),
         }
-      }
-      const pick = usable[0]!
-      return {
-        ok: true,
-        assignment: assignment(
-          target,
-          model,
-          pick.mhz,
-          `${group.label} · Canal ${pick.label}`,
-          usable.slice(1, 6).map((channel) => ({
-            frequencyMhz: channel.mhz,
-            hardware: `${group.label} · Canal ${channel.label}`,
-          })),
-        ),
       }
     }
 
@@ -292,7 +357,7 @@ export function rescanSingle(
     if (options.length === 0) {
       return {
         ok: false,
-        error: `No hay otro canal BLX ${model.bandLabel} libre para ${target.name}.`,
+        error: `No hay otro canal BLX ${model.bandLabel} libre para ${target.name} en este grupo ni en otros.`,
       }
     }
     const best = options[0]!
@@ -365,18 +430,18 @@ export function coordinateFrequencies(
     }
   }
 
+  type BandChoice =
+    | { kind: 'group'; group: PresetGroup; usable: PresetChannel[] }
+    | { kind: 'spillover' }
+
   const perBandOptions = blxBands.map((band) => {
-    const options = viableBlxGroups(band.model, band.units.length, [], blocked, score)
+    const groups = viableBlxGroups(band.model, band.units.length, [], blocked, score)
+    const options: BandChoice[] =
+      groups.length > 0
+        ? groups.map((g) => ({ kind: 'group' as const, group: g.group, usable: g.usable }))
+        : [{ kind: 'spillover' }]
     return { band, options }
   })
-
-  const emptyBand = perBandOptions.find((b) => b.options.length === 0)
-  if (emptyBand) {
-    return {
-      ok: false,
-      error: `No hay un grupo BLX ${emptyBand.band.model.bandLabel} con ${emptyBand.band.units.length} canales libres. Mira la etiqueta de banda o quita el filtro de ocupadas.`,
-    }
-  }
 
   const combos =
     perBandOptions.length === 0
@@ -389,31 +454,34 @@ export function coordinateFrequencies(
     const blxAssignments: CoordAssignment[] = []
     const titleParts: string[] = []
     let minFree = 99
+    let spilled = false
+    let comboOk = true
 
     combo.forEach((choice, bandIndex) => {
+      if (!comboOk) return
       const band = perBandOptions[bandIndex]!.band
-      const { group, usable } = choice
-      minFree = Math.min(minFree, usable.length)
-      titleParts.push(`BLX ${band.model.bandLabel} ${group.label}`)
-      band.units.forEach((row, index) => {
-        const channel = usable[index]!
-        taken.push({ mhz: channel.mhz, model: band.model })
-        const unused = usable.slice(band.units.length)
-        const rest = unused.slice(0, 8).map((c) => ({
-          frequencyMhz: c.mhz,
-          hardware: `${group.label} · Canal ${c.label}`,
-        }))
+      if (choice.kind === 'group') {
+        const { group, usable } = choice
+        minFree = Math.min(minFree, usable.length)
+        titleParts.push(`BLX ${band.model.bandLabel} ${group.label}`)
         blxAssignments.push(
-          assignment(
-            row.unit,
-            band.model,
-            channel.mhz,
-            `${group.label} · Canal ${channel.label}`,
-            rest,
-          ),
+          ...assignChunk(band.units, band.model, group, usable, taken),
         )
-      })
+        return
+      }
+
+      spilled = true
+      const packed = assignBlxSpillover(band.units, band.model, taken, blocked, score)
+      if (!packed) {
+        comboOk = false
+        return
+      }
+      minFree = Math.min(minFree, packed.remaining)
+      titleParts.push(`BLX ${band.model.bandLabel} ${packed.groupLabels.join(' + ')}`)
+      blxAssignments.push(...packed.assignments)
     })
+
+    if (!comboOk) continue
 
     const pll = placePll(others, taken, blocked, score)
     if (!pll) continue
@@ -425,7 +493,9 @@ export function coordinateFrequencies(
 
     const why =
       titleParts.length > 0
-        ? `Mismo grupo Shure en esa banda, canales distintos, y los más limpios del espectro actual. ${minFree} canales libres en el grupo.`
+        ? spilled
+          ? `Un grupo no alcanzó: el resto pasa al siguiente grupo más limpio. ${minFree} canales libres en el último grupo.`
+          : `Mismo grupo Shure en esa banda, canales distintos, y los más limpios del espectro actual. ${minFree} canales libres en el grupo.`
         : 'PLL en los MHz más quietos, separados y sin IM3 entre ellos.'
 
     plans.push({

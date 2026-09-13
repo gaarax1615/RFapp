@@ -4,6 +4,7 @@ import { useServices } from '@/app/AppProviders'
 import type { DeviceType, RfDevice } from '@/types/device'
 import { createId, formatFrequencyMhz } from '@/utils/constants'
 import { DEVICE_TYPE_LABELS, deviceTypeLabel, formatDeviceChannel } from '@/utils/i18n'
+import { getWirelessModel, guessCatalogId, lookupGroupChannel } from '@/data/wirelessCatalog'
 
 const DEVICE_TYPES: DeviceType[] = [
   'Microphone',
@@ -80,15 +81,26 @@ export function DevicesPage() {
       const previous = editingId
         ? devices.find((d) => d.id === editingId)
         : undefined
+      const catalogId = previous?.catalogId ?? guessCatalogId({
+        catalogId: previous?.catalogId,
+        brand: form.brand,
+        model: form.model,
+        frequencyMhz: form.frequencyMhz,
+      })
+      const model = catalogId ? getWirelessModel(catalogId) : undefined
+      const fromRx = model ? lookupGroupChannel(model, form.channel) : null
       const device: RfDevice = {
         id: editingId ?? createId('dev'),
         ...form,
         name: form.name.trim(),
-        channel: form.channel.trim(),
+        channel: fromRx?.compact ?? form.channel.trim(),
+        frequencyMhz: fromRx?.mhz ?? form.frequencyMhz,
         brand: form.brand.trim(),
         model: form.model.trim(),
         notes: form.notes.trim(),
-        catalogId: previous?.catalogId,
+        catalogId,
+        awaitingHardware: fromRx ? false : previous?.awaitingHardware,
+        channelSource: fromRx ? 'receiver' : previous?.channelSource,
       }
       await deviceService.upsert(device)
       const list = await deviceService.list()
@@ -198,6 +210,9 @@ export function DevicesPage() {
                   </td>
                   <td className="hidden px-3 py-2.5 font-mono text-rf-muted sm:table-cell">
                     {formatDeviceChannel(device.channel)}
+                    {device.channelSource === 'receiver' ? (
+                      <span className="ml-1 text-[10px] text-zinc-400">RX</span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2.5 font-mono text-rf-cyan">
                     {formatFrequencyMhz(device.frequencyMhz)}
@@ -251,12 +266,34 @@ export function DevicesPage() {
               />
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Canal">
+              <Field label="Canal (ej. C6)">
                 <input
-                  className="field"
+                  className="field font-mono uppercase"
                   value={form.channel}
-                  onChange={(e) => setForm({ ...form, channel: e.target.value })}
-                  placeholder="C8"
+                  placeholder="C6"
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const channel = e.target.value
+                    const catalogId = editingId
+                      ? devices.find((d) => d.id === editingId)?.catalogId
+                      : undefined
+                    const model = catalogId
+                      ? getWirelessModel(catalogId)
+                      : getWirelessModel(
+                          guessCatalogId({
+                            catalogId,
+                            brand: form.brand,
+                            model: form.model,
+                            frequencyMhz: form.frequencyMhz,
+                          }) ?? '',
+                        )
+                    const hit = model ? lookupGroupChannel(model, channel) : null
+                    setForm({
+                      ...form,
+                      channel,
+                      frequencyMhz: hit?.mhz ?? form.frequencyMhz,
+                    })
+                  }}
                 />
               </Field>
               <Field label="Tipo">

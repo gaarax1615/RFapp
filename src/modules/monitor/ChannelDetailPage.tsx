@@ -7,6 +7,7 @@ import { useEventRescan } from '@/modules/scan/useEventRescan'
 import { formatFrequencyMhz } from '@/utils/constants'
 import { formatDeviceChannel, formatStability } from '@/utils/i18n'
 import { HistoryChart, LevelRow, MiniSpectrum } from './channelMonitorWidgets'
+import { barsFromMetrics } from './MonitorCard'
 
 export function ChannelDetailPage() {
   const { deviceId } = useParams<{ deviceId: string }>()
@@ -98,7 +99,7 @@ export function ChannelDetailPage() {
               label="RF"
               value={metric ? `${metric.signalDbm.toFixed(0)} dBm` : '—'}
               ratio={metric ? (metric.signalDbm + 90) / 50 : 0}
-              color="bg-rf-cyan"
+              color={barsFromMetrics(metric, device.awaitingHardware).bar}
             />
             <LevelRow
               label="Ruido"

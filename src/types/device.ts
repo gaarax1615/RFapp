@@ -19,6 +19,8 @@ export interface RfDevice {
   catalogId?: string
   /** Hay frecuencia nueva en software; el receptor aún no está en ese grupo/canal. */
   awaitingHardware?: boolean
+  /** Quién eligió el grupo/canal: la app o el escaneo del receptor. */
+  channelSource?: 'software' | 'receiver'
 }
 
 export interface DeviceRepository {

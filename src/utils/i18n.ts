@@ -50,6 +50,14 @@ export function formatStability(stabilityDb: number, sampleCount = 8): string {
   return `${stabilityLabel(stabilityDb, sampleCount)} · ${stabilityDb.toFixed(1)} dB`
 }
 
+export function channelSourceLabel(
+  source: 'software' | 'receiver' | undefined,
+): string {
+  if (source === 'receiver') return 'Receptor'
+  if (source === 'software') return 'App'
+  return ''
+}
+
 /** Grupo B Canal 8 → B8 (no B-8). */
 export function formatDeviceChannel(channel: string | undefined): string {
   if (!channel?.trim()) return '—'

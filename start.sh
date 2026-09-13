@@ -11,6 +11,28 @@ if [[ ! -d "$BACKEND" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$BACKEND/.env" ]]; then
+  cp "$BACKEND/.env.example" "$BACKEND/.env"
+  echo "Creado Backend/.env desde .env.example"
+fi
+set -a
+# shellcheck disable=SC1091
+source "$BACKEND/.env"
+set +a
+
+DEPS_LIB="$BACKEND/.deps/lib"
+if [[ -d "$DEPS_LIB" ]]; then
+  export DYLD_LIBRARY_PATH="$DEPS_LIB${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+  if [[ -z "${RTLSDR_LIB:-}" ]]; then
+    for cand in "$DEPS_LIB/librtlsdr.0.dylib" "$DEPS_LIB/librtlsdr.dylib"; do
+      if [[ -f "$cand" ]]; then
+        export RTLSDR_LIB="$cand"
+        break
+      fi
+    done
+  fi
+fi
+
 if [[ ! -x "$BACKEND/.venv/bin/python" ]]; then
   echo "Creando entorno Python del Backend..."
   python3 -m venv "$BACKEND/.venv"

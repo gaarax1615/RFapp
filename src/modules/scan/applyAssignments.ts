@@ -12,6 +12,7 @@ export async function applyAssignments(options: {
   monitor: MonitorService
   setDevices: (devices: RfDevice[]) => void
   awaitingHardware?: boolean
+  channelSource?: RfDevice['channelSource']
 }): Promise<RfDevice[]> {
   let list = [...options.devices]
   for (const row of options.assignments) {
@@ -33,6 +34,7 @@ export async function applyAssignments(options: {
       enabled: existing?.enabled ?? true,
       catalogId: row.catalogId,
       awaitingHardware: options.awaitingHardware ?? existing?.awaitingHardware,
+      channelSource: options.channelSource ?? existing?.channelSource ?? 'software',
     }
     await options.deviceService.upsert(device)
     const index = list.findIndex((item) => item.id === device.id)

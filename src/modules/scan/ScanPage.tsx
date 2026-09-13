@@ -316,6 +316,8 @@ export function ScanPage() {
         deviceService,
         monitor,
         setDevices,
+        channelSource: 'software',
+        awaitingHardware: true,
       })
       setSavedMsg(
         'Frecuencias guardadas. Pon grupo/canal (o MHz) a mano en cada receptor y ve al Panel.',
@@ -541,8 +543,9 @@ export function ScanPage() {
         <section className="rounded-xl border border-white/10 bg-[#141414] p-4">
           <h3 className="text-sm font-semibold">3. Elige una opción</h3>
           <p className="mt-2 text-sm text-slate-300">
-            En Shure BLX, misma banda = mismo grupo. Los in-ears van en MHz que no
-            choquen con las petacas.
+            En Shure BLX se prefiere misma banda = mismo grupo. Si ese grupo se
+            llena, el resto pasa al siguiente grupo más limpio. Los in-ears van en
+            MHz que no choquen con las petacas.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {plans.map((plan) => {

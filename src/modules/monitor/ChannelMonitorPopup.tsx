@@ -10,6 +10,8 @@ import type { RfDevice } from '@/types/device'
 import type { ChannelMetrics } from '@/types/monitor'
 import type { RfAlert } from '@/types/alerts'
 import { HistoryChart, LevelRow, MiniSpectrum } from './channelMonitorWidgets'
+import { barsFromMetrics } from './MonitorCard'
+import { ReceiverChannelForm } from './ReceiverChannelForm'
 
 const DEFAULT_POS = { x: 72, y: 72 }
 
@@ -227,7 +229,7 @@ export function ChannelMonitorPopup({
             label="RF"
             value={metrics ? `${metrics.signalDbm.toFixed(0)} dBm` : '—'}
             ratio={metrics ? (metrics.signalDbm + 90) / 50 : 0}
-            color="bg-rf-cyan"
+            color={barsFromMetrics(metrics, device.awaitingHardware).bar}
           />
           <LevelRow
             label="Ruido"
@@ -252,6 +254,8 @@ export function ChannelMonitorPopup({
             color="bg-white"
           />
         </div>
+
+        <ReceiverChannelForm device={device} />
 
         <div>
           <p className="mb-1 font-mono text-[10px] tracking-wider text-rf-muted uppercase">

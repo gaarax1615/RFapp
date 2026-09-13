@@ -16,10 +16,10 @@ const hardwareStyles: Record<HardwareConnectionState, string> = {
 }
 
 const signalStyles: Record<SignalStatus, string> = {
-  GOOD: 'bg-white/10 text-white border-zinc-400/50',
-  WARNING: 'bg-zinc-500/15 text-zinc-200 border-zinc-400/40',
-  INTERFERENCE: 'bg-black text-zinc-200 border-white/35',
-  NO_SIGNAL: 'bg-black text-zinc-400 border-white/20',
+  GOOD: 'bg-green-500/15 text-green-300 border-green-400/50',
+  WARNING: 'bg-yellow-500/15 text-yellow-300 border-yellow-400/50',
+  INTERFERENCE: 'bg-red-500/15 text-red-300 border-red-400/50',
+  NO_SIGNAL: 'bg-red-500/10 text-red-400 border-red-400/35',
 }
 
 const alertStyles: Record<AlertSeverity, string> = {

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatFrequencyMhz } from '@/utils/constants'
-import { formatDeviceChannel, formatStability } from '@/utils/i18n'
+import { channelSourceLabel, formatDeviceChannel, formatStability } from '@/utils/i18n'
 import type { RfDevice } from '@/types/device'
 import type { ChannelMetrics } from '@/types/monitor'
 import type { RfAlert } from '@/types/alerts'
@@ -168,6 +168,7 @@ function SignalBar({
   compact?: boolean
 }) {
   const level = Math.max(0, Math.min(1, (metrics.signalDbm + 90) / 50))
+  const signal = barsFromMetrics(metrics)
   return (
     <div className={compact ? 'mt-3' : 'mt-4'}>
       <div className="mb-1 flex justify-between text-[10px] text-rf-muted">
@@ -176,7 +177,7 @@ function SignalBar({
       </div>
       <div className="h-2 overflow-hidden rounded bg-rf-bg">
         <div
-          className="h-full rounded bg-zinc-400 transition-[width] duration-300"
+          className={`h-full rounded transition-[width] duration-300 ${signal.bar}`}
           style={{ width: `${level * 100}%` }}
         />
       </div>
@@ -188,38 +189,40 @@ function formatDbm(v: number): string {
   return `${v.toFixed(0)} dBm`
 }
 
-function barsFromMetrics(
+export function barsFromMetrics(
   metrics?: ChannelMetrics,
   awaitingHardware?: boolean,
 ): {
   bars: number
   tone: string
+  bar: string
   label: string
 } {
   if (!metrics || metrics.sampleCount === 0) {
-    return { bars: 0, tone: 'text-slate-500', label: 'Leyendo…' }
+    return { bars: 0, tone: 'text-slate-500', bar: 'bg-slate-500', label: 'Leyendo…' }
   }
 
   const snr = metrics.snrDb
   if (snr < 8) {
     return {
       bars: 0,
-      tone: 'text-slate-500',
+      tone: awaitingHardware ? 'text-slate-500' : 'text-red-500',
+      bar: awaitingHardware ? 'bg-slate-500' : 'bg-red-500',
       label: awaitingHardware
         ? 'Pon este grupo/canal en el BLX'
         : 'Sin portadora',
     }
   }
   if (snr < 10 || metrics.status === 'INTERFERENCE') {
-    return { bars: 1, tone: 'text-red-500', label: 'Sucia / débil' }
+    return { bars: 1, tone: 'text-red-500', bar: 'bg-red-500', label: 'Sucia / débil' }
   }
   if (snr < 14 || metrics.status === 'WARNING') {
-    return { bars: 2, tone: 'text-yellow-400', label: 'Regular' }
+    return { bars: 2, tone: 'text-yellow-400', bar: 'bg-yellow-400', label: 'Regular' }
   }
   if (snr < 22) {
-    return { bars: 3, tone: 'text-zinc-300', label: 'Buena' }
+    return { bars: 3, tone: 'text-green-400', bar: 'bg-green-400', label: 'Buena' }
   }
-  return { bars: 4, tone: 'text-white', label: 'Muy buena' }
+  return { bars: 4, tone: 'text-green-300', bar: 'bg-green-400', label: 'Muy buena' }
 }
 
 function CellularSignalIcon({ bars }: { bars: number }) {
@@ -301,13 +304,11 @@ export function MiniMonitorCard({
         >
           {formatFrequencyMhz(device.frequencyMhz)}
         </p>
-        <p
-          className={[
-            'font-mono text-[10px]',
-            selected ? 'text-orange-200/80' : 'text-slate-400',
-          ].join(' ')}
-        >
+        <p className={['font-mono text-[10px]', signal.tone].join(' ')}>
           {signal.label}
+          {device.channelSource
+            ? ` · ${channelSourceLabel(device.channelSource)}`
+            : ''}
         </p>
       </div>
       <span

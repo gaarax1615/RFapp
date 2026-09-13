@@ -371,6 +371,42 @@ export function getWirelessModel(id: string): WirelessModel | undefined {
   return WIRELESS_CATALOG.find((m) => m.id === id)
 }
 
+/** C6, C 6, C-6, Grupo C Canal 6 → grupo C + canal 6. */
+export function parseGroupChannel(
+  raw: string,
+): { groupId: string; channelLabel: string } | null {
+  const t = raw.trim().toUpperCase().replace(/\s+/g, ' ')
+  if (!t) return null
+  const labeled = t.match(/^GRUPO\s+([A-Z0-9]+)\s*[·.\-–]?\s*CANAL\s+([A-Z0-9]+)$/)
+  if (labeled) return { groupId: labeled[1]!, channelLabel: labeled[2]! }
+  const compact = t.match(/^([A-Z])\s*[-–]?\s*([0-9A-Z])$/)
+  if (compact) return { groupId: compact[1]!, channelLabel: compact[2]! }
+  return null
+}
+
+export function lookupGroupChannel(
+  model: WirelessModel,
+  raw: string,
+): { compact: string; mhz: number; hardware: string } | null {
+  const parsed = parseGroupChannel(raw)
+  if (!parsed || !model.groups?.length) return null
+  const group = model.groups.find(
+    (g) =>
+      g.id.toUpperCase() === parsed.groupId ||
+      g.label.replace(/^GRUPO\s+/i, '').toUpperCase() === parsed.groupId,
+  )
+  if (!group) return null
+  const channel = group.channels.find(
+    (c) => c.label.toUpperCase() === parsed.channelLabel,
+  )
+  if (!channel) return null
+  return {
+    compact: `${group.id.toUpperCase()}${channel.label}`,
+    mhz: channel.mhz,
+    hardware: `${group.label} · Canal ${channel.label}`,
+  }
+}
+
 export function catalogLabel(model: WirelessModel): string {
   return `${model.brand} ${model.model} ${model.bandLabel}`
 }

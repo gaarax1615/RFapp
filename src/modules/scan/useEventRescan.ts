@@ -117,6 +117,7 @@ export function useEventRescan() {
         monitor,
         setDevices,
         awaitingHardware: true,
+        channelSource: 'software',
       })
 
       const extra = seenAt

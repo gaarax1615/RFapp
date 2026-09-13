@@ -15,6 +15,8 @@ _CANDIDATE_LIBS = (
 )
 
 _BREW_PATHS = (
+    Path(__file__).resolve().parent.parent / ".deps" / "lib",
+    Path.home() / ".local" / "lib",
     Path("/opt/homebrew/lib"),
     Path("/usr/local/lib"),
     Path("/opt/local/lib"),
